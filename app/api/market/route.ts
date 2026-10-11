@@ -26,34 +26,8 @@ function toFiniteNumber(value: string | number) {
 }
 
 function fallbackMarket(symbol: string, interval: string, notice: string) {
-  const base = symbol === "BTCUSDT" ? 68_000 : symbol === "ETHUSDT" ? 3_600 : 145;
-  const intervalMilliseconds = interval === "1m" ? 60_000 : interval === "5m" ? 300_000 : interval === "15m" ? 900_000 : 3_600_000;
-  const start = Date.now() - 120 * intervalMilliseconds;
-  let previous = base * 0.965;
-  const candles = Array.from({ length: 120 }, (_, index) => {
-    const wave = Math.sin(index / 5.4) * 0.006 + Math.cos(index / 12.5) * 0.009;
-    const trend = index < 52 ? index * 0.00034 : (104 - index) * 0.00022;
-    const close = base * (1 + wave + trend);
-    const open = previous;
-    previous = close;
-    return {
-      time: start + index * intervalMilliseconds,
-      open,
-      high: Math.max(open, close) * 1.0025,
-      low: Math.min(open, close) * 0.9975,
-      close
-    };
-  });
-
-  return Response.json(
-    {
-      candles,
-      source: "内置演示行情（Testnet 暂不可用）",
-      marketNotice: notice,
-      fetchedAt: new Date().toISOString()
-    },
-    { headers: { "Cache-Control": "no-store" } }
-  );
+  // Never silently mix generated demonstration prices with an existing account.
+  return Response.json({ error: notice, symbol, interval }, { status: 503, headers: { "Cache-Control": "no-store" } });
 }
 
 export async function GET(request: NextRequest) {
@@ -73,20 +47,22 @@ export async function GET(request: NextRequest) {
   try {
     const upstream = await fetch(endpoint, {
       headers: { Accept: "application/json" },
-      cache: "no-store"
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(15_000)
     });
 
     if (!upstream.ok) {
-      return fallbackMarket(symbol, interval, "Binance Testnet 当前不可访问，已切换为内置演示行情。");
+      return fallbackMarket(symbol, interval, "Binance Testnet 当前不可访问，已停止本次模拟交易。");
     }
 
     const raw = (await upstream.json()) as unknown;
     if (!Array.isArray(raw)) {
-      return fallbackMarket(symbol, interval, "Testnet 返回了无法解析的数据，已切换为内置演示行情。");
+      return fallbackMarket(symbol, interval, "Testnet 数据无法解析，已停止本次模拟交易。");
     }
 
     const candles = raw
-      .filter((row): row is BinanceKline => Array.isArray(row) && row.length >= 6)
+      .filter((row): row is BinanceKline => Array.isArray(row) && row.length >= 7 && Number(row[6]) < Date.now())
       .map((row) => {
         const time = toFiniteNumber(row[0]);
         const open = toFiniteNumber(row[1]);
@@ -94,7 +70,7 @@ export async function GET(request: NextRequest) {
         const low = toFiniteNumber(row[3]);
         const close = toFiniteNumber(row[4]);
 
-        if ([time, open, high, low, close].some((value) => value === null)) {
+        if ([time, open, high, low, close].some((value) => value === null) || !close || close <= 0) {
           return null;
         }
 
@@ -105,7 +81,7 @@ export async function GET(request: NextRequest) {
       );
 
     if (candles.length < 30) {
-      return fallbackMarket(symbol, interval, "Testnet 返回的 K 线不足，已切换为内置演示行情。");
+      return fallbackMarket(symbol, interval, "Testnet 已收盘 K 线不足，已停止本次模拟交易。");
     }
 
     return Response.json(
@@ -117,6 +93,6 @@ export async function GET(request: NextRequest) {
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch {
-    return fallbackMarket(symbol, interval, "无法连接 Binance Testnet，已切换为内置演示行情。");
+    return fallbackMarket(symbol, interval, "无法连接 Binance Testnet，已停止本次模拟交易。");
   }
 }

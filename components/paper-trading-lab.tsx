@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type SymbolName = "BTCUSDT" | "ETHUSDT" | "SOLUSDT";
 type IntervalName = "1m" | "5m" | "15m" | "1h";
@@ -47,6 +47,7 @@ type PaperAccount = {
   startingCash: number;
   position: Position | null;
   trades: Trade[];
+  lastCandle?: number | null;
 };
 
 type MarketResponse = {
@@ -75,7 +76,8 @@ const createAccount = (startingCash = 10_000): PaperAccount => ({
   cash: startingCash,
   startingCash,
   position: null,
-  trades: []
+  trades: [],
+  lastCandle: null
 });
 
 const defaultAccount = createAccount();
@@ -259,6 +261,10 @@ function runStrategy(account: PaperAccount, candles: Candle[], config: BotConfig
   if (!current || candles.length < config.slowPeriod + 2) {
     return { account, action: "K 线数量不足，等待更多数据。" };
   }
+  if (account.lastCandle === current.time) {
+    return { account, action: "此根收盘 K 线已经处理，等待新 K 线。" };
+  }
+  account = { ...account, lastCandle: current.time };
 
   const price = current.close;
   const fast = simpleMovingAverage(candles, config.fastPeriod);
@@ -327,6 +333,10 @@ export function PaperTradingLab() {
   const [status, setStatus] = useState("尚未运行策略。当前是离线演示行情。");
   const [running, setRunning] = useState(false);
   const [fetching, setFetching] = useState(false);
+  const accountRef = useRef(account);
+  const busyRef = useRef(false);
+
+  useEffect(() => { accountRef.current = account; }, [account]);
 
   const currentPrice = candles.at(-1)?.close ?? 0;
   const fastAverage = useMemo(
@@ -373,6 +383,8 @@ export function PaperTradingLab() {
   }, [config.interval, config.symbol]);
 
   const refreshPrice = useCallback(async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setFetching(true);
     try {
       const market = await requestMarketData();
@@ -383,26 +395,32 @@ export function PaperTradingLab() {
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "行情刷新失败。");
     } finally {
+      busyRef.current = false;
       setFetching(false);
     }
   }, [requestMarketData]);
 
   const runCycle = useCallback(async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setFetching(true);
     try {
       const market = await requestMarketData();
-      const result = runStrategy(account, market.candles, config);
+      const result = runStrategy(accountRef.current, market.candles, config);
       setCandles(market.candles);
       setMarketSource(market.source);
       setMarketUpdatedAt(market.fetchedAt);
       setAccount(result.account);
+      accountRef.current = result.account;
       setStatus(`${market.marketNotice ? `${market.marketNotice} ` : ""}策略已检查：${result.action}`);
     } catch (error) {
+      setRunning(false);
       setStatus(error instanceof Error ? error.message : "策略运行失败。");
     } finally {
+      busyRef.current = false;
       setFetching(false);
     }
-  }, [account, config, requestMarketData]);
+  }, [config, requestMarketData]);
 
   useEffect(() => {
     if (!running) {
@@ -414,6 +432,10 @@ export function PaperTradingLab() {
   }, [config.pollSeconds, runCycle, running]);
 
   function updateConfig<K extends keyof BotConfig>(key: K, value: BotConfig[K]) {
+    if (busyRef.current || ((key === "symbol" || key === "interval") && (account.position || running))) {
+      setStatus("请先停止策略；有持仓时不能切换交易对或周期。");
+      return;
+    }
     setConfig((current) => clampConfig({ ...current, [key]: value }));
   }
 
@@ -478,7 +500,7 @@ export function PaperTradingLab() {
         <span className="safety-icon" aria-hidden="true">✓</span>
         <div>
           <strong>只使用虚拟资金</strong>
-          <p>本应用只读取 Binance Spot Testnet 的公开行情；虚拟余额、持仓和订单全部保存在这台设备上，代码没有真实下单接口。</p>
+          <p>本页只做本机模拟，不是币安测试账户余额。Testnet 机器人独立运行；本页按钮不控制它，也不会向实盘下单。</p>
         </div>
       </section>
 
@@ -519,7 +541,7 @@ export function PaperTradingLab() {
             <div className="field-row two">
               <label>
                 交易对
-                <select value={config.symbol} onChange={(event) => updateConfig("symbol", event.target.value as SymbolName)}>
+                <select disabled={fetching || running || !!account.position} value={config.symbol} onChange={(event) => updateConfig("symbol", event.target.value as SymbolName)}>
                   <option value="BTCUSDT">BTC / USDT</option>
                   <option value="ETHUSDT">ETH / USDT</option>
                   <option value="SOLUSDT">SOL / USDT</option>
@@ -527,7 +549,7 @@ export function PaperTradingLab() {
               </label>
               <label>
                 K 线周期
-                <select value={config.interval} onChange={(event) => updateConfig("interval", event.target.value as IntervalName)}>
+                <select disabled={fetching || running || !!account.position} value={config.interval} onChange={(event) => updateConfig("interval", event.target.value as IntervalName)}>
                   <option value="1m">1 分钟</option>
                   <option value="5m">5 分钟</option>
                   <option value="15m">15 分钟</option>
@@ -586,7 +608,7 @@ export function PaperTradingLab() {
           <div className="control-actions">
             <button className="button primary" disabled={fetching} onClick={() => void runCycle()} type="button">{fetching ? "正在分析…" : "运行一次"}</button>
             <button className="button subtle" disabled={fetching} onClick={() => void refreshPrice()} type="button">刷新行情</button>
-            <button className={running ? "button warning" : "button start"} onClick={() => setRunning((current) => !current)} type="button">{running ? "停止自动策略" : "启动自动策略"}</button>
+            <button className={running ? "button warning" : "button start"} disabled={fetching && !running} onClick={() => setRunning((current) => !current)} type="button">{running ? "停止自动策略" : "启动自动策略"}</button>
           </div>
           <p className="status-line">{status}</p>
         </aside>

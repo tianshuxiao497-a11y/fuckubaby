@@ -1,7 +1,11 @@
 node_modules
 .next
 .vercel
-.env.local
+.env*
+!.env.example
+!.env.testnet.example
+.secrets/
+.paper-data/
 .npm-cache
 *.log
 *.pem
