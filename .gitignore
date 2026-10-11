@@ -4,6 +4,7 @@ node_modules
 .env*
 !.env.example
 !.env.testnet.example
+!.env.testnet.fast.example
 .secrets/
 .paper-data/
 .npm-cache

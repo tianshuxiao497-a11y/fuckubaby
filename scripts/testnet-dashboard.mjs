@@ -25,7 +25,7 @@ async function readJson(path) {
   catch (error) { if (error.code === 'ENOENT') return null; throw new Error('本机测试记录暂时无法读取。'); }
 }
 async function refresh() {
-  if (snapshot && Date.now() - snapshot.updatedAt < 20_000) return snapshot;
+  if (snapshot && Date.now() - snapshot.updatedAt < (config.strategy === 'fast' ? 5_000 : 20_000)) return snapshot;
   if (inFlight) return inFlight;
   inFlight = (async () => {
     const state = validateMonitorState(await readJson('testnet-state.json'), config, apiKey);

@@ -3,10 +3,10 @@ import { mkdir, readFile, writeFile, rename, open, unlink } from 'node:fs/promis
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { TestnetClient, TESTNET_ORIGIN, readConfig, loadMarket, marketQuantity, initialState, runCycle } from '../lib/testnet-bot.mjs';
+import { TestnetClient, TESTNET_ORIGIN, readConfig, loadMarket, marketQuantity, initialState, adoptStrategyState, readOnlyRecoveryDelay, runCycle } from '../lib/testnet-bot.mjs';
 
 const args = process.argv.slice(2);
-const allowedArgs = ['--market', '--status', '--validate', '--once', '--watch', '--buy-test', '--stop', '--enable-testnet-orders'];
+const allowedArgs = ['--market', '--status', '--validate', '--once', '--watch', '--buy-test', '--stop', '--adopt-strategy', '--enable-testnet-orders'];
 if (args.some(arg => !allowedArgs.includes(arg)) || args.filter(arg => arg !== '--enable-testnet-orders').length !== 1) {
   console.error('用法：npm run testnet:market / testnet:status / testnet:validate / testnet:preview / testnet:run');
   process.exit(1);
@@ -44,6 +44,9 @@ try {
     if (privateKey.asymmetricKeyType !== 'ed25519') throw new Error('此程序的私钥签名只支持 Ed25519。');
   }
   const enableOrders = args.includes('--enable-testnet-orders');
+  const adoptStrategy = args.includes('--adopt-strategy');
+  if (adoptStrategy && enableOrders) throw new Error('切换记录不能同时开启交易。');
+  if (adoptStrategy && !apiKey) throw new Error('接续策略必须使用原测试账户的本机密钥。');
   if (args.includes('--buy-test') && !enableOrders) throw new Error('试单必须显式开启 Testnet 虚拟委托。');
   const client = new TestnetClient({ apiKey, apiSecret, privateKey, allowOrders: enableOrders });
   console.log(`模式：Binance Spot Testnet（虚拟资金）；地址：${TESTNET_ORIGIN}`);
@@ -67,7 +70,7 @@ try {
     if (enableOrders && (!apiKey || (!apiSecret && !privateKey))) throw new Error('请先在本机 .env.testnet 填入 Testnet 专用密钥。');
     const directory = resolve('.paper-data');
     const statePath = resolve(directory, 'testnet-state.json');
-    if (enableOrders) {
+    if (enableOrders || adoptStrategy) {
       await mkdir(directory, { recursive: true });
       lockPath = resolve(directory, 'testnet-bot.lock');
       try { lock = await open(lockPath, 'wx'); } catch (error) {
@@ -75,21 +78,29 @@ try {
         throw error;
       }
       await lock.writeFile(String(process.pid));
-      try { await unlink(stopPath); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      if (enableOrders) {
+        try { await unlink(stopPath); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      }
     }
     // Acquire the lock before reading state, so another instance cannot leave
     // us using a stale position snapshot.
     const state = initialState(config, apiKey);
     try {
       const saved = JSON.parse(await readFile(statePath, 'utf8'));
-      if (saved.version !== 1 || saved.mode !== state.mode || saved.accountTag !== state.accountTag || saved.symbol !== config.symbol || saved.interval !== config.interval) {
+      if (adoptStrategy) Object.assign(state, adoptStrategyState(saved, config, apiKey));
+      else {
+      if (saved.version !== 1 || saved.mode !== state.mode || saved.accountTag !== state.accountTag || saved.symbol !== config.symbol || saved.interval !== config.interval || (saved.strategy || 'classic') !== config.strategy) {
         throw new Error('已有状态与当前账户/交易对/周期不一致；请先保留原记录并核对持仓。');
       }
       if (!Array.isArray(saved.orders) || (saved.position && (!Number.isFinite(saved.position.quantity) || saved.position.quantity <= 0 || !Number.isFinite(saved.position.entryPrice) || saved.position.entryPrice <= 0))) {
         throw new Error('状态记录无效，请先核对持仓。');
       }
       Object.assign(state, saved);
-    } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      }
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      if (adoptStrategy) throw new Error('没有可接续的原账户记录，拒绝创建空白持仓记录。');
+    }
     if (enableOrders) {
       activity = { pid: process.pid, accountTag: state.accountTag, startedAt: Date.now(), config };
       await publishActivity('running');
@@ -99,18 +110,37 @@ try {
       await writeFile(statePath + '.tmp', JSON.stringify(value, null, 2), { mode: 0o600 });
       await rename(statePath + '.tmp', statePath);
     };
+    if (adoptStrategy) {
+      await persist(state);
+      console.log(`已接续 ${config.strategy} 策略（${config.interval}，SMA ${config.fast}/${config.slow}）；保留真实测试网持仓与订单，不补执行历史交叉，本次不下单。`);
+    } else {
+    let readFailures = 0;
     do {
-      if (existsSync(stopPath)) break;
+      if (enableOrders && existsSync(stopPath)) break;
+      let delay = config.pollSeconds;
+      try {
       const result = await runCycle(client, config, state, persist, enableOrders, { manualBuy: args.includes('--buy-test') });
+      readFailures = 0;
       await publishActivity('running', result);
       console.log(`${new Date().toISOString()} ${JSON.stringify(result)}`);
+      } catch (error) {
+        const recovery = readOnlyRecoveryDelay(error, config, state, ++readFailures);
+        if (!enableOrders || !args.includes('--watch') || recovery === null) throw error;
+        delay = recovery;
+        const result = { action: '只读行情连接中断：暂停下单，等待连接恢复', retryAfterSeconds: delay };
+        await publishActivity('reconnecting', result);
+        console.log(`${new Date().toISOString()} ${JSON.stringify(result)}`);
+      }
       if (!args.includes('--watch') || stopping) break;
-      // Poll serially; an exception ends the process rather than auto-resubmitting.
-      for (let seconds = 0; seconds < config.pollSeconds && !stopping; seconds++) {
+      // Only known read-only transient failures may resume, with backoff.
+      // A pending/ambiguous order or POST failure always ends this process.
+      for (let seconds = 0; seconds < delay && !stopping; seconds++) {
         await sleep(1000);
         if (existsSync(stopPath)) { stopping = true; break; }
+        if (activity?.status === 'reconnecting' && seconds % 20 === 19) await publishActivity('reconnecting');
       }
     } while (!stopping);
+    }
   }
   }
 } catch (error) {

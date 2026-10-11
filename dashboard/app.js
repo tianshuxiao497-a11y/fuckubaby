@@ -33,7 +33,14 @@ function render(data) {
   element('entry').textContent = data.position ? `$${number(data.position.entryPrice)}` : '当前空仓';
   element('opened').textContent = data.position ? `买入时间 ${time(data.position.openedAt)} · 估值 ${number(data.position.value, 4)} 虚拟 USDT` : '等待策略信号';
   const settings = element('settings'); settings.replaceChildren();
-  for (const [name, value] of [['交易对', data.symbol], ['K 线周期', data.config.interval], ['均线', `SMA ${data.config.fast} / ${data.config.slow}`], ['单笔上限', `${data.config.tradeUsdt} 虚拟 USDT`], ['止损 / 止盈', `${data.config.stopLoss}% / ${data.config.takeProfit}%`], ['检查间隔', `${data.config.pollSeconds} 秒`]]) label(settings, name, value);
+  const rapid = data.config.strategy === 'fast';
+  const settingRows = [['模式', rapid ? '快速实验（非盈利验证）' : '经典均线'], ['交易对', data.symbol], ['K 线周期', data.config.interval], ['均线', `SMA ${data.config.fast} / ${data.config.slow}`], ['单笔上限', `${data.config.tradeUsdt} 虚拟 USDT`], ['止损 / 止盈', `${data.config.stopLoss}% / ${data.config.takeProfit}%`], ['每轮检查间隔', `${data.config.pollSeconds} 秒 + 请求耗时`]];
+  if (rapid) settingRows.push(['最长持仓', `${data.config.maxHoldMinutes} 分钟`], ['买入冷却', `${data.config.cooldownSeconds} 秒（任何成交后）`], ['买入次数上限', `${data.config.maxBuysPerHour} 次 / 滚动小时（不限制卖出）`]);
+  for (const [name, value] of settingRows) label(settings, name, value);
+  const indicators = data.indicators;
+  element('signal-summary').textContent = indicators ? `最新 K 线收盘 ${time(indicators.closeTime)} · SMA ${data.config.fast}：${number(indicators.fast)} / SMA ${data.config.slow}：${number(indicators.slow)}。仅最新收盘交叉有效，不补历史信号。${data.strategyChangedAt ? `模式接管于 ${time(data.strategyChangedAt)}。` : ''}` : '均线数据尚未取得';
+  element('risk-note').textContent = rapid ? `均线交叉按新收盘的一分钟 K 线判断；止损、止盈、最长持仓每轮都检查，不等待下一根收盘。每轮间隔 ${data.config.pollSeconds} 秒加请求耗时，不是实时成交保证。断网、关机或休眠时无法执行。退出可能受最小数量限制。` : '止盈止损按新收盘 K 线检查，不是交易所实时保护单。断网、关机或休眠时无法执行。';
+  element('refresh-note').textContent = `看板每 5 秒请求更新，账户数据最多缓存 ${rapid ? 5 : 20} 秒。关闭看板不会停止机器人。`;
   const balances = element('balances'); balances.replaceChildren();
   for (const balance of data.balances) {
     const row = document.createElement('div'); row.className = 'balance-row';
@@ -79,4 +86,4 @@ async function refresh() {
   } finally { busy = false; element('refresh').disabled = false; }
 }
 element('refresh').addEventListener('click', refresh);
-void refresh(); setInterval(refresh, 10000);
+void refresh(); setInterval(refresh, 5000);

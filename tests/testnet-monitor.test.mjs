@@ -7,7 +7,7 @@ const config = readConfig({ TESTNET_FAST_PERIOD: '3', TESTNET_SLOW_PERIOD: '5' }
 test('monitor rejects a different account, production mode or different symbol', () => {
   const state = initialState(config, 'unit-key');
   assert.deepEqual(validateMonitorState(null, config, 'unit-key'), state);
-  for (const patch of [{ accountTag: 'other' }, { mode: 'LIVE' }, { symbol: 'ETHUSDT' }, { orders: null }]) {
+  for (const patch of [{ accountTag: 'other' }, { mode: 'LIVE' }, { symbol: 'ETHUSDT' }, { orders: null }, { strategy: 'fast' }]) {
     assert.throws(() => validateMonitorState({ ...state, ...patch }, config, 'unit-key'));
   }
 });
@@ -17,6 +17,8 @@ test('monitor distinguishes a live heartbeat, stopped process, stale data and mi
   assert.equal(monitorActivity(heartbeat, config, 'tag', now, false).status, 'stale');
   assert.equal(monitorActivity(heartbeat, config, 'tag', now + 200000, true).status, 'stale');
   assert.equal(monitorActivity({ ...heartbeat, status: 'stopped' }, config, 'tag', now, true).status, 'stopped');
+  assert.equal(monitorActivity({ ...heartbeat, status: 'reconnecting' }, config, 'tag', now, true).status, 'reconnecting');
+  assert.equal(monitorActivity({ ...heartbeat, status: 'reconnecting' }, config, 'tag', now, false).status, 'stale');
   assert.equal(monitorActivity(null, config, 'tag').status, 'unknown');
 });
 test('snapshot has real account fills and only bot-owned position, no credentials or mutating calls', async () => {
@@ -45,6 +47,7 @@ test('snapshot has real account fills and only bot-owned position, no credential
   assert.equal(data.trades.find(t => t.orderId === 123).botOwned, true);
   assert.equal(data.trades.find(t => t.orderId === 456).botOwned, false);
   assert.equal(data.botOrders[0].status, 'FILLED');
+  assert.equal(data.indicators.fast, 83010); assert.equal(data.indicators.slow, 83010);
   assert.equal(JSON.stringify(data).includes('must-not-leak'), false);
   assert.equal(JSON.stringify(data).includes('private-internal-id'), false);
   assert.equal(paths.length, 5);
