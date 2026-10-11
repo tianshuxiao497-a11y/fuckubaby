@@ -6,7 +6,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { TestnetClient, TESTNET_ORIGIN, readConfig, loadMarket, marketQuantity, initialState, runCycle } from '../lib/testnet-bot.mjs';
 
 const args = process.argv.slice(2);
-const allowedArgs = ['--market', '--status', '--validate', '--once', '--watch', '--stop', '--enable-testnet-orders'];
+const allowedArgs = ['--market', '--status', '--validate', '--once', '--watch', '--buy-test', '--stop', '--enable-testnet-orders'];
 if (args.some(arg => !allowedArgs.includes(arg)) || args.filter(arg => arg !== '--enable-testnet-orders').length !== 1) {
   console.error('用法：npm run testnet:market / testnet:status / testnet:validate / testnet:preview / testnet:run');
   process.exit(1);
@@ -15,6 +15,15 @@ if (args.some(arg => !allowedArgs.includes(arg)) || args.filter(arg => arg !== '
 let lock;
 let lockPath;
 let stopping = false;
+let activity;
+let lastError = null;
+const activityPath = resolve('.paper-data/testnet-heartbeat.json');
+const publishActivity = async (status, result = null) => {
+  if (!activity) return;
+  activity = { ...activity, status, updatedAt: Date.now(), ...(result ? { result } : {}) };
+  await writeFile(activityPath + '.tmp', JSON.stringify(activity), { mode: 0o600 });
+  await rename(activityPath + '.tmp', activityPath);
+};
 const stopPath = resolve('.paper-data/testnet-stop');
 process.on('SIGINT', () => { stopping = true; });
 process.on('SIGTERM', () => { stopping = true; });
@@ -35,6 +44,7 @@ try {
     if (privateKey.asymmetricKeyType !== 'ed25519') throw new Error('此程序的私钥签名只支持 Ed25519。');
   }
   const enableOrders = args.includes('--enable-testnet-orders');
+  if (args.includes('--buy-test') && !enableOrders) throw new Error('试单必须显式开启 Testnet 虚拟委托。');
   const client = new TestnetClient({ apiKey, apiSecret, privateKey, allowOrders: enableOrders });
   console.log(`模式：Binance Spot Testnet（虚拟资金）；地址：${TESTNET_ORIGIN}`);
 
@@ -80,6 +90,10 @@ try {
       }
       Object.assign(state, saved);
     } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (enableOrders) {
+      activity = { pid: process.pid, accountTag: state.accountTag, startedAt: Date.now(), config };
+      await publishActivity('running');
+    }
 
     const persist = async value => {
       await writeFile(statePath + '.tmp', JSON.stringify(value, null, 2), { mode: 0o600 });
@@ -87,7 +101,8 @@ try {
     };
     do {
       if (existsSync(stopPath)) break;
-      const result = await runCycle(client, config, state, persist, enableOrders);
+      const result = await runCycle(client, config, state, persist, enableOrders, { manualBuy: args.includes('--buy-test') });
+      await publishActivity('running', result);
       console.log(`${new Date().toISOString()} ${JSON.stringify(result)}`);
       if (!args.includes('--watch') || stopping) break;
       // Poll serially; an exception ends the process rather than auto-resubmitting.
@@ -99,10 +114,12 @@ try {
   }
   }
 } catch (error) {
+  lastError = error.message;
   console.error(error.message);
   process.exitCode = 1;
 } finally {
   if (lock) {
+    await publishActivity(lastError ? 'error' : 'stopped', lastError ? { action: lastError } : null);
     await lock.close();
     await unlink(lockPath);
   }

@@ -49,6 +49,10 @@ BINANCE_TESTNET_PRIVATE_KEY_PATH=.secrets/testnet-ed25519-private.pem
 
 ## 验证、运行与停止
 
+**看交易实况**：执行 `npm run testnet:dashboard` 后打开 http://127.0.0.1:3001。此页是测试账户的只读实时看板，显示测试网余额、机器人仓位、币安成交、订单和运行心跳；不是原来 localhost:3000 的本机模拟账户。仅绑定本机地址，不携带密钥到浏览器，也不向云端展示测试账户信息。账户数据最多缓存 20 秒。关闭页面不会停止机器人。
+
+Windows 后台开启看板：`powershell -NoProfile -File scripts/testnet-dashboard-start.ps1`。可选的手动虚拟买入试单命令为 `node --env-file-if-exists=.env.testnet scripts/testnet.mjs --buy-test --enable-testnet-orders`；执行前须先停止自动进程、核实空仓。它使用 quoteOrderQty 将试单金额限制在 99.90 虚拟 USDT 内，有持仓时拒绝再次试单，异常时仍先核对不重发。
+
 ```powershell
 npm run testnet:market    # 公开行情，无需密钥
 npm run testnet:status    # 读取测试账户的虚拟余额

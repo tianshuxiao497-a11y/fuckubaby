@@ -13,6 +13,7 @@
     "testnet:validate": "node --env-file-if-exists=.env.testnet scripts/testnet.mjs --validate",
     "testnet:preview": "node --env-file-if-exists=.env.testnet scripts/testnet.mjs --once",
     "testnet:stop": "node scripts/testnet.mjs --stop",
+    "testnet:dashboard": "node --env-file-if-exists=.env.testnet scripts/testnet-dashboard.mjs",
     "testnet:run": "node --env-file-if-exists=.env.testnet scripts/testnet.mjs --watch --enable-testnet-orders"
   },
   "dependencies": {

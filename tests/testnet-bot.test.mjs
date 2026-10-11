@@ -10,7 +10,7 @@ const candles = [10, 10, 10, 10, 10, 11].map((close, index) => ({
   closeTime: serverTime - (5 - index) * config.intervalMs - 1
 }));
 const symbolInfo = {
-  symbol: 'BTCUSDT', baseAsset: 'BTC', status: 'TRADING', orderTypes: ['MARKET'],
+  symbol: 'BTCUSDT', baseAsset: 'BTC', status: 'TRADING', orderTypes: ['MARKET'], quoteOrderQtyMarketAllowed: true,
   filters: [
     { filterType: 'LOT_SIZE', minQty: '0.00001000', maxQty: '1000.00000000', stepSize: '0.00001000' },
     { filterType: 'MARKET_LOT_SIZE', minQty: '0.00000000', maxQty: '1000.00000000', stepSize: '0.00000000' },
@@ -131,7 +131,7 @@ function mockExchange({ loseResponse = false, missingOrder = false } = {}) {
       if (path === '/api/v3/ticker/price') return { price: '100000' };
       if (path === '/api/v3/account') return { canTrade: true, balances: [{ asset: 'USDT', free: '10000' }] };
       if (path === '/api/v3/order' && method === 'POST') {
-        submitted = params;
+        submitted = { ...params, quantity: params.quantity ?? String(Number(params.quoteOrderQty) / 100000) };
         if (loseResponse) throw new Error('response lost');
         return order();
       }
@@ -200,4 +200,28 @@ test('sell settlement consumes only the bot-owned position, including base-asset
   const client = { request: async () => [{ orderId: 78, qty: '0.000999', commissionAsset: 'BTC', commission: '0.000001' }] };
   await settleOrder(client, state, pending, order, 'BTC');
   assert.equal(state.position, null); assert.equal(state.lastCandle, 1);
+});
+
+test('explicit manual virtual buy bypasses signal dedup, caps quote budget below 100, and refuses repeat entry', async () => {
+  const exchange = mockExchange(); const state = initialState(config, 'unit-key');
+  state.lastCandle = candles.at(-1).time;
+  await runCycle(exchange, { ...config, tradeUsdt: 1000 }, state, async () => {}, true, { manualBuy: true });
+  assert.equal(state.orders[0].reason, '用户确认的虚拟买入试单');
+  assert.ok(state.position.quantity < 0.001);
+  await assert.rejects(runCycle(exchange, config, state, async () => {}, true, { manualBuy: true }));
+  assert.equal(exchange.calls.filter(call => call.method === 'POST').length, 1);
+});
+
+test('manual buy response loss is recovered by querying, never submitting another buy', async () => {
+  const exchange = mockExchange({ loseResponse: true }); const state = initialState(config, 'unit-key');
+  await assert.rejects(runCycle(exchange, config, state, async () => {}, true, { manualBuy: true }));
+  assert.equal(state.pending.quoteOrderQty, '99.90');
+  await runCycle(exchange, config, state, async () => {}, true, { manualBuy: true });
+  assert.equal(exchange.calls.filter(call => call.method === 'POST').length, 1);
+});
+
+test('automatic buy also uses quote amount to keep the configured virtual budget', async () => {
+  const exchange = mockExchange({ loseResponse: true }); const state = initialState(config, 'unit-key');
+  await assert.rejects(runCycle(exchange, config, state, async () => {}, true));
+  assert.equal(state.pending.quoteOrderQty, '100.00');
 });
