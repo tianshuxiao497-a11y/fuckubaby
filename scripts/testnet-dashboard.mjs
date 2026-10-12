@@ -20,26 +20,37 @@ const files = new Map([
 ]);
 let snapshot;
 let inFlight;
+let accessRefusal;
 async function readJson(path) {
   try { return JSON.parse(await readFile(resolve('.paper-data', path), 'utf8')); }
   catch (error) { if (error.code === 'ENOENT') return null; throw new Error('本机测试记录暂时无法读取。'); }
 }
+async function localContext() {
+  const state = validateMonitorState(await readJson('testnet-state.json'), config, apiKey);
+  const heartbeat = await readJson('testnet-heartbeat.json');
+  let alive = false;
+  if (Number.isSafeInteger(heartbeat?.pid) && heartbeat.pid > 0) {
+    try { process.kill(heartbeat.pid, 0); alive = true; } catch { /* process not available */ }
+  }
+  return { state, activity: monitorActivity(heartbeat, config, state.accountTag, Date.now(), alive) };
+}
 async function refresh() {
-  if (snapshot && Date.now() - snapshot.updatedAt < (config.strategy === 'fast' ? 5_000 : 20_000)) return snapshot;
+  // Explicit access restrictions are not transient connectivity failures.
+  // Latch until an operator verifies access and restarts this read-only server.
+  if (accessRefusal) throw accessRefusal;
+  if (snapshot && Date.now() - snapshot.updatedAt < (config.strategy !== 'classic' ? 5_000 : 20_000)) return snapshot;
   if (inFlight) return inFlight;
   inFlight = (async () => {
-    const state = validateMonitorState(await readJson('testnet-state.json'), config, apiKey);
-    const heartbeat = await readJson('testnet-heartbeat.json');
-    let alive = false;
-    if (Number.isSafeInteger(heartbeat?.pid) && heartbeat.pid > 0) {
-      try { process.kill(heartbeat.pid, 0); alive = true; } catch { /* process not available */ }
-    }
-    const activity = monitorActivity(heartbeat, config, state.accountTag, Date.now(), alive);
+    const { state, activity } = await localContext();
     const value = await monitorSnapshot(client, config, state, activity);
     snapshot = value;
     return value;
   })();
-  try { return await inFlight; } finally { inFlight = null; }
+  try { return await inFlight; }
+  catch (error) {
+    if (error.status === 451 || (error.status === 403 && error.code === 0)) accessRefusal = error;
+    throw error;
+  } finally { inFlight = null; }
 }
 
 const server = createServer(async (request, response) => {
@@ -59,7 +70,8 @@ const server = createServer(async (request, response) => {
       const value = await refresh();
       response.writeHead(200, { ...headers, 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify(value));
     } catch (error) {
-      response.writeHead(503, { ...headers, 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: error.message, updatedAt: null }));
+      const activity = await localContext().then(value => value.activity).catch(() => ({ status: 'unknown', label: '本机策略状态尚未确认' }));
+      response.writeHead(503, { ...headers, 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ mode: 'BINANCE_SPOT_TESTNET', config, symbol: config.symbol, activity, error: error.message, httpStatus: error.status ?? null, updatedAt: null }));
     }
   } else if (files.has(path)) {
     const [name, type] = files.get(path);

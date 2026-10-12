@@ -23,9 +23,9 @@
         <section class="panel"><div class="panel-title"><h3>机器人订单</h3><span class="pill" id="order-count">0 笔</span></div><div class="table-scroll"><table><thead><tr><th>订单号</th><th>方向</th><th>状态</th><th>已成交 BTC</th><th>实际金额</th><th>原因</th></tr></thead><tbody id="orders"></tbody></table></div><p id="pending" class="muted"></p></section>
       </div>
       <aside>
-        <section class="panel"><p class="eyebrow">AUTOMATED STRATEGY</p><h3>策略与持仓</h3><dl id="settings"></dl><p class="note" id="signal-summary">正在核对最新收盘信号…</p><div class="position"><span>机器人买入均价</span><strong id="entry">—</strong><small id="opened">当前空仓</small></div><p class="note" id="risk-note">本机程序不是交易所实时保护单。断网、关机或休眠时无法执行。</p></section>
+        <section class="panel"><p class="eyebrow">AUTOMATED STRATEGY</p><h3>策略与持仓</h3><dl id="settings"></dl><p class="note" id="signal-summary">正在核对策略与数据…</p><div class="position"><span>机器人买入均价</span><strong id="entry">—</strong><small id="opened">当前持仓数据暂未取得</small></div><p class="note" id="risk-note">本机程序不是交易所实时保护单。断网、关机或休眠时无法执行。</p></section>
         <section class="panel"><h3>测试账户全部余额</h3><p class="muted">含注册时赠送的虚拟资产；不全是机器人买入。</p><div id="balances"></div><p class="muted" id="open-orders">正在查询未完成委托…</p></section>
-        <section class="panel help"><h3>如何看交易</h3><p>成交表显示实际买卖记录。价格波动时，持仓估值和浮盈会更新；无信号时保持等待。历史交叉不代表当时程序正在运行，重启不会补执行历史交叉。</p><p id="refresh-note">看板每 5 秒请求更新。关闭看板不会停止机器人。</p><p>停止策略：在项目终端运行 <code>npm run testnet:stop</code>。停止不会自动卖出持仓。</p></section>
+        <section class="panel help"><h3>如何看交易</h3><p id="trading-help">成交表显示实际买卖记录。数据尚未取得时不能确认成交数量或持仓。</p><p id="refresh-note">看板每 5 秒请求更新。关闭看板不会停止机器人。</p><p>停止策略：在项目终端运行 <code>npm run testnet:stop</code>。停止不会自动卖出持仓。</p></section>
       </aside>
     </section>
     <footer>仅本机访问 · 只读看板，无下单按钮 · 币安现货测试网账户 · 更新时间使用新加坡时区</footer>

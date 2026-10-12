@@ -112,7 +112,10 @@ try {
     };
     if (adoptStrategy) {
       await persist(state);
-      console.log(`已接续 ${config.strategy} 策略（${config.interval}，SMA ${config.fast}/${config.slow}）；保留真实测试网持仓与订单，不补执行历史交叉，本次不下单。`);
+      activity = { pid: process.pid, accountTag: state.accountTag, startedAt: Date.now(), config };
+      const action = config.strategy === 'cycle' ? `已配置 ${config.cycleSeconds} 秒循环试验，策略尚未启动；本次不下单。` : '策略配置已接续，尚未启动；本次不下单。';
+      await publishActivity('stopped', { action });
+      console.log(`已接续 ${config.strategy} 策略（${config.strategy === 'cycle' ? `${config.cycleSeconds} 秒交替买卖` : `${config.interval}，SMA ${config.fast}/${config.slow}`}）；保留实际测试网持仓与订单，不补执行历史信号，本次不下单。`);
     } else {
     let readFailures = 0;
     do {
