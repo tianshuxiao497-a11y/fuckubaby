@@ -1,0 +1,17 @@
+{
+  "version": 3,
+  "mode": "BINANCE_SPOT_TESTNET_ONLY",
+  "strategy": "adaptive",
+  "adaptiveProfile": "short",
+  "symbol": "BTCUSDT",
+  "interval": "1m",
+  "pollSeconds": 5,
+  "maxPositionUsdt": 100,
+  "fastPeriod": 3,
+  "slowPeriod": 8,
+  "stopLossPercent": 0.15,
+  "takeProfitPercent": 0.15,
+  "maxHoldMinutes": 3,
+  "cooldownSeconds": 10,
+  "maxBuysPerHour": 60
+}

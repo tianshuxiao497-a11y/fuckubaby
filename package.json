@@ -1,33 +1,27 @@
 {
-  "name": "binance-testnet-quant-lab",
-  "version": "0.2.0",
+  "name": "virtual-quant-testnet-source",
+  "version": "1.0.0",
   "private": true,
+  "type": "module",
+  "description": "Standalone Binance Spot Testnet virtual-funds quant program. No production execution.",
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "check": "tsc --noEmit",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node --test tests/atomic-json.test.mjs tests/package-virtual.test.mjs tests/testnet-adaptive-integration.test.mjs tests/testnet-adaptive.test.mjs tests/testnet-bot.test.mjs tests/testnet-commission.test.mjs tests/testnet-cycle.test.mjs tests/testnet-dashboard-ui.test.mjs tests/testnet-fast.test.mjs tests/testnet-monitor.test.mjs tests/testnet-multi-asset-integration.test.mjs tests/testnet-persistence.test.mjs tests/testnet-short-integration.test.mjs tests/testnet-tactical.test.mjs tests/virtual-trading-policy.test.mjs",
+    "check": "node scripts/package-virtual.mjs --check",
+    "virtual:describe": "node scripts/virtual-trading.mjs --describe",
+    "virtual:preview": "node scripts/virtual-trading.mjs --preview",
+    "virtual:run": "node scripts/virtual-trading.mjs --run",
+    "virtual:status": "node scripts/virtual-trading.mjs --status",
+    "virtual:adopt": "node scripts/virtual-trading.mjs --adopt",
+    "virtual:stop": "node scripts/virtual-trading.mjs --stop",
     "testnet:market": "node scripts/testnet.mjs --market",
-    "testnet:status": "node --env-file-if-exists=.env.testnet scripts/testnet.mjs --status",
     "testnet:validate": "node --env-file-if-exists=.env.testnet scripts/testnet.mjs --validate",
+    "testnet:status": "node --env-file-if-exists=.env.testnet scripts/testnet.mjs --status",
     "testnet:preview": "node --env-file-if-exists=.env.testnet scripts/testnet.mjs --once",
     "testnet:stop": "node scripts/testnet.mjs --stop",
     "testnet:dashboard": "node --env-file-if-exists=.env.testnet scripts/testnet-dashboard.mjs",
-    "testnet:run": "node --env-file-if-exists=.env.testnet scripts/testnet.mjs --watch --enable-testnet-orders"
-  },
-  "dependencies": {
-    "next": "16.2.6",
-    "react": "19.2.6",
-    "react-dom": "19.2.6"
-  },
-  "devDependencies": {
-    "@types/node": "25.9.1",
-    "@types/react": "19.2.15",
-    "@types/react-dom": "19.2.3",
-    "typescript": "6.0.3"
-  },
-  "overrides": {
-    "postcss": "8.5.10"
+    "package:virtual": "node scripts/package-virtual.mjs"
   }
 }

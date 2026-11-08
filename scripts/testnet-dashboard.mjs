@@ -4,8 +4,12 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { TestnetClient, readConfig } from '../lib/testnet-bot.mjs';
 import { monitorActivity, monitorSnapshot, validateMonitorState } from '../lib/testnet-monitor.mjs';
+import { policyEnvironment } from '../lib/virtual-trading-policy.mjs';
 
-const config = readConfig();
+// The read-only monitor must use the same reviewed policy as the launcher,
+// rather than silently displaying stale settings from a local credential file.
+const policy = JSON.parse(await readFile(resolve('strategies/virtual-only.json'), 'utf8'));
+const config = readConfig({ ...process.env, ...policyEnvironment(policy, process.env) });
 const apiKey = process.env.BINANCE_TESTNET_API_KEY?.trim() || '';
 const apiSecret = process.env.BINANCE_TESTNET_API_SECRET?.trim() || '';
 const privateKeyPath = process.env.BINANCE_TESTNET_PRIVATE_KEY_PATH?.trim();
