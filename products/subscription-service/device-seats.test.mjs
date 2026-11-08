@@ -35,8 +35,8 @@ test('nonce replay is refused and renewal does not outlive the paid term',async(
 });
 test('seller reset requires the expected binding and waits for outstanding leases before rebinding',async()=>{
   const store=storage();await claimSeat(store,request(a));
-  assert.equal((await resetSeat(store,{expectedDeviceHash:b,nonce:randomUUID(),now:time})).ok,false);
-  const reset=await resetSeat(store,{expectedDeviceHash:a,nonce:randomUUID(),now:time+1000});assert.ok(reset.ok);
+  assert.equal((await resetSeat(store,{expectedDeviceHash:b,newDeviceHash:b,nonce:randomUUID(),now:time})).ok,false);
+  const reset=await resetSeat(store,{expectedDeviceHash:a,newDeviceHash:b,nonce:randomUUID(),now:time+1000});assert.ok(reset.ok);
   assert.equal((await claimSeat(store,request(b,{now:time+119999}))).reason,'device_reset_wait');
   assert.ok((await claimSeat(store,request(b,{now:time+120001}))).ok);
   assert.equal((await claimSeat(store,request(a,{now:time+120002}))).reason,'device_limit_reached');

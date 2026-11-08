@@ -53,10 +53,11 @@ test('private-key owner can release the current session but cannot remove the pe
 });
 test('administrative rebinding requires the seller signature and respects the old lease expiry',async()=>{
   const f=fixture(),a=f.key(),body=f.proof(a);await f.send(body);
-  const reset={licenseHash:hash(f.licenseKey),expectedDeviceHash:hash(body.devicePublicKey),nonce:randomUUID(),timestamp:f.clock()};
-  const payload=JSON.stringify(['AdaptiveSpotBot.DeviceReset.v2',f.env.WHOP_COMPANY_ID,f.env.WHOP_PRODUCT_ID,reset.licenseHash,reset.expectedDeviceHash,reset.nonce,reset.timestamp]);
+  const target=f.key(),targetHash=hash(f.proof(target).devicePublicKey);
+  const reset={licenseHash:hash(f.licenseKey),expectedDeviceHash:hash(body.devicePublicKey),newDeviceHash:targetHash,nonce:randomUUID(),timestamp:f.clock()};
+  const payload=JSON.stringify(['AdaptiveSpotBot.DeviceReset.v2',f.env.WHOP_COMPANY_ID,f.env.WHOP_PRODUCT_ID,reset.licenseHash,reset.expectedDeviceHash,reset.newDeviceHash,reset.nonce,reset.timestamp]);
   const call=signature=>f.worker.fetch(new Request('https://fixture.invalid/api/device-reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...reset,signature})}),f.env);
   assert.equal((await call(sign(null,Buffer.from(payload),f.key()).toString('base64url'))).status,403);
   assert.equal((await call(sign(null,Buffer.from(payload),f.signer.privateKey).toString('base64url'))).status,200);
-  assert.equal((await f.send(f.proof(f.key()))).status,409);f.advance(120001);assert.equal((await f.send(f.proof(f.key()))).status,200);
+  assert.equal((await f.send(f.proof(f.key()))).status,409);f.advance(120001);assert.equal((await f.send(f.proof(a))).status,409);assert.equal((await f.send(f.proof(target))).status,200);
 });

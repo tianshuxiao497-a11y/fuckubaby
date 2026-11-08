@@ -1,7 +1,7 @@
 // Stateful device-bound verifier. Enable only after the upgraded clients are ready.
 import {createPublicKey,verify,sign} from 'node:crypto';
 import {readSettings,validateSubscription} from '../subscription-service/service.mjs';
-import {verifyDeviceProof} from '../subscription-service/device-protocol.mjs';
+import {verifyDeviceProof,hash} from '../subscription-service/device-protocol.mjs';
 import {claimSeat,releaseSeat,resetSeat} from '../subscription-service/device-seats.mjs';
 const headers={'Content-Type':'application/json','Cache-Control':'no-store, private','X-Content-Type-Options':'nosniff'};
 const json=(body,status=200)=>Response.json(body,{status,headers});
@@ -36,7 +36,7 @@ export function createDeviceWorker({fetchImpl=(...args)=>globalThis.fetch(...arg
       body=JSON.parse(Buffer.concat(pieces).toString());
     }catch{return json({active:false,reason:'invalid_request'},400);}
     try{
-      const rate=await env.ASB_RATE_LIMITER.limit({key:'device-'+(request.headers.get('CF-Connecting-IP')??'unknown')});
+      const rate=await env.ASB_RATE_LIMITER.limit({key:'device-'+hash(request.headers.get('CF-Connecting-IP')??'unknown')});
       if(rate.success!==true)return json({active:false,reason:'rate_limited'},429);
     }catch{return json({active:false,reason:'verification_unavailable'},503);}
     async function seat(licenseHash,value){
@@ -45,10 +45,10 @@ export function createDeviceWorker({fetchImpl=(...args)=>globalThis.fetch(...arg
       if(!response.ok)throw new Error('seat_unavailable');return response.json();
     }
     if(url.pathname==='/api/device-reset'){
-      if(!body||Object.keys(body).sort().join(',')!=='expectedDeviceHash,licenseHash,nonce,signature,timestamp'||!['licenseHash','expectedDeviceHash'].every(k=>/^[a-f0-9]{64}$/.test(body[k]??''))||!/^[a-f0-9-]{36}$/.test(body.nonce??'')||!Number.isSafeInteger(body.timestamp)||Math.abs(now()-body.timestamp)>30000||!/^[A-Za-z0-9_-]{80,100}$/.test(body.signature??''))return json({active:false,reason:'invalid_admin_request'},400);
-      const payload=JSON.stringify(['AdaptiveSpotBot.DeviceReset.v2',settings.companyId,settings.productId,body.licenseHash,body.expectedDeviceHash,body.nonce,body.timestamp]);
+      if(!body||Object.keys(body).sort().join(',')!=='expectedDeviceHash,licenseHash,newDeviceHash,nonce,signature,timestamp'||!['licenseHash','expectedDeviceHash','newDeviceHash'].every(k=>/^[a-f0-9]{64}$/.test(body[k]??''))||!/^[a-f0-9-]{36}$/.test(body.nonce??'')||!Number.isSafeInteger(body.timestamp)||Math.abs(now()-body.timestamp)>30000||!/^[A-Za-z0-9_-]{80,100}$/.test(body.signature??''))return json({active:false,reason:'invalid_admin_request'},400);
+      const payload=JSON.stringify(['AdaptiveSpotBot.DeviceReset.v2',settings.companyId,settings.productId,body.licenseHash,body.expectedDeviceHash,body.newDeviceHash,body.nonce,body.timestamp]);
       if(!verify(null,Buffer.from(payload),createPublicKey(settings.key),Buffer.from(body.signature,'base64url')))return json({active:false,reason:'admin_signature_required'},403);
-      try{const result=await seat(body.licenseHash,{operation:'reset',expectedDeviceHash:body.expectedDeviceHash,nonce:body.nonce,now:now()});return json(result,result.ok?200:409);}catch{return json({ok:false,reason:'seat_unavailable'},503);}
+      try{const result=await seat(body.licenseHash,{operation:'reset',expectedDeviceHash:body.expectedDeviceHash,newDeviceHash:body.newDeviceHash,nonce:body.nonce,now:now()});return json(result,result.ok?200:409);}catch{return json({ok:false,reason:'seat_unavailable'},503);}
     }
     if(!body?.devicePublicKey||!body?.deviceSignature)return json({active:false,reason:'client_upgrade_required'},426);
     const proof=verifyDeviceProof(body,now());if(!proof)return json({active:false,reason:'device_proof_invalid'},403);

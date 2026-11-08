@@ -93,6 +93,7 @@
               <TextBlock Text="订阅授权 / SUBSCRIPTION" Foreground="#C4B5FD" FontWeight="SemiBold" FontSize="12"/>
               <TextBlock x:Name="LicenseState" Text="未激活 · 只能查看，不能启动交易" Foreground="#F1F5FF" FontSize="23" FontWeight="SemiBold" Margin="0,18,0,12"/>
               <TextBlock x:Name="LicenseUntil" Text="有效期以 Whop 服务端记录为准" Foreground="#8FA5C5" FontSize="12" Margin="0,0,0,24"/>
+              <TextBlock x:Name="LicenseDevice" Text="一证一机：首次核验绑定当前设备；换机请联系卖家解绑。" Foreground="#80DCC7" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,15"/>
               <TextBlock Text="输入 Whop 订单中的软件许可证（不是 Binance API Key）" Foreground="#BCCCE4" TextWrapping="Wrap" Margin="0,0,0,10"/>
               <PasswordBox x:Name="LicenseKeyInput" Margin="0,0,0,16"/>
               <WrapPanel><Button x:Name="ActivateLicenseButton" Content="验证并保存许可证" Style="{DynamicResource PrimaryButton}" Margin="0,0,12,8"/><Button x:Name="ManageSubscriptionButton" Content="打开 Whop 订单 / 续费" Style="{DynamicResource SecondaryButton}" Margin="0,0,0,8"/></WrapPanel>

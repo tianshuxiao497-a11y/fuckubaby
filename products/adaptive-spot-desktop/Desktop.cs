@@ -234,6 +234,8 @@ internal sealed class Desktop : Window {
     void LicenseMessage(Dictionary<string,object> m) {
         bool wasLicensed=licensed; licensed=Yes(m,"active"); string state=Str(Get(m,"status")); licenseWorking=state=="checking";
         bool serviceConfigured=Yes(m,"configured");
+        var device=Convert.ToString(Get(m,"deviceHash"));
+        Txt("LicenseDevice",!String.IsNullOrEmpty(device)?"绑定设备 / Device: "+device+"\n一证一机；更换电脑或遗失配置时请联系卖家解绑。":"一证一机：首次核验绑定当前设备；换机请联系卖家解绑。");
         Txt("LicenseState",licensed?"订阅有效 · 可在连接后手动开始":licenseWorking?"正在联网核验订阅…":!serviceConfigured?"授权服务未配置 · 交易已锁定":"授权无效或待核验 · 禁止启动交易");
         var expiry=Num(Get(m,"paidUntil"));
         Txt("LicenseUntil",expiry.HasValue && expiry.Value>=0 && expiry.Value<=253402300799999d?"本期有效至 "+new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc).AddMilliseconds(expiry.Value).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz")+(Yes(m,"cancelAtPeriodEnd")?" · 已取消自动续费":""):!serviceConfigured?"此安装包不能交易或作为已开通订阅销售；需要卖家完成正式服务配置与验收。":"有效期以联网核验为准。每 30 秒复查，签名租约最多 120 秒，无长期离线授权。");

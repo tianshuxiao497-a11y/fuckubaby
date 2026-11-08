@@ -23,12 +23,13 @@ export async function releaseSeat(storage,{deviceHash,session}){
     await tx.put('seat',{...seat,session:null,activeUntil:0});return {ok:true};
   });
 }
-export async function resetSeat(storage,{expectedDeviceHash,nonce,now}){
+export async function resetSeat(storage,{expectedDeviceHash,newDeviceHash,nonce,now}){
+  if(!/^[a-f0-9]{64}$/.test(newDeviceHash??'')||!Number.isSafeInteger(now))return {ok:false,reason:'target_device_required'};
   return storage.transaction(async tx=>{
     const seat=await tx.get('seat');
     if(!seat||seat.deviceHash!==expectedDeviceHash)return {ok:false,reason:'binding_changed'};
     if(seat.lastResetNonce===nonce)return {ok:false,reason:'replayed_reset'};
-    await tx.put('seat',{deviceHash:null,session:null,activeUntil:0,blockedUntil:Math.max(now,seat.activeUntil??now),lastResetNonce:nonce,lastResetAt:now});
+    await tx.put('seat',{deviceHash:newDeviceHash,session:null,activeUntil:0,boundAt:now,blockedUntil:Math.max(now,seat.activeUntil??now),lastResetNonce:nonce,lastResetAt:now});
     // The old device's outstanding signed lease may remain usable for <=120s.
     return {ok:true,oldLeaseMayRemainUntil:seat.activeUntil??now};
   });
