@@ -67,17 +67,22 @@ app.whenReady().then(async()=>{
   await window.loadFile(path.join(__dirname,'index.html'));
   if(selfTestRoot){
     const output=path.resolve(selfTestRoot);await fs.mkdir(output,{recursive:true});
+    let selfTestStage='renderer';
     try{
       const state=await window.webContents.executeJavaScript("({heading:document.querySelector('h1').textContent,startDisabled:document.getElementById('start').disabled,licenseInput:document.getElementById('license').type,rendererNodeDisabled:typeof require==='undefined',bridgeAvailable:typeof window.bot.command==='function'})");
       if(!state.startDisabled||state.licenseInput!=='password'||!state.rendererNodeDisabled||!state.bridgeAvailable)throw new Error('renderer_security_or_initial_state_failed');
-      startEngine();const ready=await Promise.race([engineReady,new Promise((_,reject)=>setTimeout(()=>reject(new Error('engine_boot_timeout')),12000))]);
+      selfTestStage='engine';startEngine();const ready=await Promise.race([engineReady,new Promise((_,reject)=>setTimeout(()=>reject(new Error('engine_boot_timeout')),12000))]);
       if(ready.mode!=='BINANCE_SPOT_TESTNET_ONLY'||ready.ordersEnabled!==false)throw new Error('engine_initial_mode_failed');
       const local=await send({command:'local'});if(local.running||local.license.active)throw new Error('offline_engine_must_remain_stopped');
       let refused=false;try{await send({command:'start',confirmVirtualOnly:true,confirmNoOtherBot:true});}catch{refused=true;}if(!refused)throw new Error('unconfigured_start_not_refused');
+      // A hidden X11 surface may not have a Viz frame to capture. Paint a real
+      // window on the isolated CI display before requesting the screenshot.
+      selfTestStage='capture';window.show();
+      await window.webContents.executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
       const image=await window.webContents.capturePage();await fs.writeFile(path.join(output,'DESKTOP-PREVIEW.png'),image.toPNG());
       await fs.writeFile(path.join(output,'RESULT.json'),JSON.stringify({passed:true,platform:process.platform,arch:process.arch,electron:process.versions.electron,node:process.versions.node,renderer:state,bundledControllerBooted:true,unconfiguredStartRefused:true,realAccountReads:0,exchangeOrders:0},null,2));
       await send({command:'close'}).catch(()=>{});child?.stdin.end();closing=true;window.destroy();app.exit(0);
-    }catch(error){await fs.writeFile(path.join(output,'FAILED.txt'),scrub(error.message));child?.stdin.end();closing=true;window.destroy();app.exit(1);}
+    }catch(error){const detail=selfTestStage+': '+scrub(error.message);await fs.writeFile(path.join(output,'FAILED.txt'),detail);console.error('Native self-test '+detail);child?.stdin.end();closing=true;window.destroy();app.exit(1);}
     return;
   }
   window.show();
