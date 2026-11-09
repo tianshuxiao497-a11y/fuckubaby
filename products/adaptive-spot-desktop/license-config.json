@@ -1,0 +1,7 @@
+{
+  "endpoint": "https://adaptive-spot-license-free.xiaotianshu731.workers.dev/api/validate",
+  "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEALmVif+WT8qRzlSEdFM3FwxaUtTO/dXewqSWFzHjwtGE=\n-----END PUBLIC KEY-----\n",
+  "companyId": "biz_KAiAyPYUEaP2l1",
+  "productId": "prod_KIUnn09xAwsal",
+  "planIds": ["plan_hDSOoWy649Nus"]
+}
