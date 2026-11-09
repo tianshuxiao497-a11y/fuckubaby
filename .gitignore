@@ -1,17 +1,11 @@
-node_modules
-.next
-.vercel
-.env*
-!.env.example
-!.env.testnet.example
-!.env.testnet.fast.example
-!.env.testnet.cycle.example
+# Runtime credentials and account records never belong in source exports.
+.env
+.env.*
+!.env.testnet*.example
 .secrets/
 .paper-data/
-.npm-cache
-*.log
+exports/
+node_modules/
 *.pem
 *.key
-*.tsbuildinfo
-
-.vercel
+*.log

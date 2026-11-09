@@ -1,9 +1,11 @@
 import { createPrivateKey } from 'node:crypto';
-import { mkdir, readFile, writeFile, rename, open, unlink } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, open, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { TestnetClient, TESTNET_ORIGIN, readConfig, loadMarket, marketQuantity, initialState, adoptStrategyState, readOnlyRecoveryDelay, runCycle } from '../lib/testnet-bot.mjs';
+import { atomicWriteJson } from '../lib/atomic-json.mjs';
+import { finishTestnetRunner } from '../lib/testnet-runner-lifecycle.mjs';
 
 const args = process.argv.slice(2);
 const allowedArgs = ['--market', '--status', '--validate', '--once', '--watch', '--buy-test', '--stop', '--adopt-strategy', '--enable-testnet-orders'];
@@ -21,8 +23,7 @@ const activityPath = resolve('.paper-data/testnet-heartbeat.json');
 const publishActivity = async (status, result = null) => {
   if (!activity) return;
   activity = { ...activity, status, updatedAt: Date.now(), ...(result ? { result } : {}) };
-  await writeFile(activityPath + '.tmp', JSON.stringify(activity), { mode: 0o600 });
-  await rename(activityPath + '.tmp', activityPath);
+  await atomicWriteJson(activityPath, activity);
 };
 const stopPath = resolve('.paper-data/testnet-stop');
 process.on('SIGINT', () => { stopping = true; });
@@ -92,6 +93,9 @@ try {
       if (saved.version !== 1 || saved.mode !== state.mode || saved.accountTag !== state.accountTag || saved.symbol !== config.symbol || saved.interval !== config.interval || (saved.strategy || 'classic') !== config.strategy) {
         throw new Error('已有状态与当前账户/交易对/周期不一致；请先保留原记录并核对持仓。');
       }
+      if (config.strategy === 'adaptive' && (saved.adaptiveProfile ?? 'standard') !== config.adaptiveProfile) {
+        throw new Error('Adaptive profile changed: safely stop, reconcile, then explicitly adopt the reviewed policy.');
+      }
       if (!Array.isArray(saved.orders) || (saved.position && (!Number.isFinite(saved.position.quantity) || saved.position.quantity <= 0 || !Number.isFinite(saved.position.entryPrice) || saved.position.entryPrice <= 0))) {
         throw new Error('状态记录无效，请先核对持仓。');
       }
@@ -102,35 +106,39 @@ try {
       if (adoptStrategy) throw new Error('没有可接续的原账户记录，拒绝创建空白持仓记录。');
     }
     if (enableOrders) {
+      if (config.strategy === 'tactical') { state.tacticalSamples = []; state.tacticalDecision = null; }
+      if (config.strategy === 'adaptive') { state.adaptiveSamples = []; state.adaptiveDecision = null; }
       activity = { pid: process.pid, accountTag: state.accountTag, startedAt: Date.now(), config };
       await publishActivity('running');
     }
 
-    const persist = async value => {
-      await writeFile(statePath + '.tmp', JSON.stringify(value, null, 2), { mode: 0o600 });
-      await rename(statePath + '.tmp', statePath);
-    };
+    const persist = value => atomicWriteJson(statePath, value);
     if (adoptStrategy) {
       await persist(state);
       activity = { pid: process.pid, accountTag: state.accountTag, startedAt: Date.now(), config };
-      const action = config.strategy === 'cycle' ? `已配置 ${config.cycleSeconds} 秒循环试验，策略尚未启动；本次不下单。` : '策略配置已接续，尚未启动；本次不下单。';
+      const action = config.strategy === 'adaptive' ? 'Adaptive five-second virtual strategy configured, not started; no order placed.' : config.strategy === 'cycle' ? `已配置 ${config.cycleSeconds} 秒循环试验，策略尚未启动；本次不下单。` : config.strategy === 'tactical' ? '已配置约 10 秒判断的趋势动量分批策略，尚未启动；本次不下单。' : '策略配置已接续，尚未启动；本次不下单。';
       await publishActivity('stopped', { action });
-      console.log(`已接续 ${config.strategy} 策略（${config.strategy === 'cycle' ? `${config.cycleSeconds} 秒交替买卖` : `${config.interval}，SMA ${config.fast}/${config.slow}`}）；保留实际测试网持仓与订单，不补执行历史信号，本次不下单。`);
+      console.log(`已接续 ${config.strategy} 策略（${config.strategy === 'cycle' ? `${config.cycleSeconds} 秒交替买卖` : `${config.interval}，${config.strategy === 'adaptive' ? 'EMA' : 'SMA'} ${config.fast}/${config.slow}`}）；保留实际测试网持仓与订单，不补执行历史信号，本次不下单。`);
     } else {
     let readFailures = 0;
     do {
       if (enableOrders && existsSync(stopPath)) break;
       let delay = config.pollSeconds;
+      const cycleStartedAt = Date.now();
       try {
       const result = await runCycle(client, config, state, persist, enableOrders, { manualBuy: args.includes('--buy-test') });
       readFailures = 0;
       await publishActivity('running', result);
       console.log(`${new Date().toISOString()} ${JSON.stringify(result)}`);
+      if (['tactical', 'adaptive'].includes(config.strategy)) delay = Math.max(1, Math.ceil(config.pollSeconds - (Date.now() - cycleStartedAt) / 1000));
       } catch (error) {
         const recovery = readOnlyRecoveryDelay(error, config, state, ++readFailures);
         if (!enableOrders || !args.includes('--watch') || recovery === null) throw error;
+        if (config.strategy === 'tactical') { state.tacticalSamples = []; state.tacticalDecision = null; await persist(state); }
+        if (config.strategy === 'adaptive') { state.adaptiveSamples = []; state.adaptiveDecision = null; await persist(state); }
         delay = recovery;
-        const result = { action: '只读行情连接中断：暂停下单，等待连接恢复', retryAfterSeconds: delay };
+        const result = { action: '只读行情连接中断：暂停下单，等待连接恢复', retryAfterSeconds: delay,
+          error: error.message, httpStatus: error.status ?? null, code: error.code ?? null };
         await publishActivity('reconnecting', result);
         console.log(`${new Date().toISOString()} ${JSON.stringify(result)}`);
       }
@@ -152,8 +160,11 @@ try {
   process.exitCode = 1;
 } finally {
   if (lock) {
-    await publishActivity(lastError ? 'error' : 'stopped', lastError ? { action: lastError } : null);
-    await lock.close();
-    await unlink(lockPath);
+    const cleanupErrors = await finishTestnetRunner({ lock, lockPath, pid: process.pid, publishActivity,
+      status: lastError ? 'error' : 'stopped', result: lastError ? { action: lastError } : null });
+    for (const error of cleanupErrors) {
+      console.error(`Testnet cleanup failed (${error.code ?? 'unknown'}): ${error.message}`);
+      process.exitCode = 1;
+    }
   }
 }
