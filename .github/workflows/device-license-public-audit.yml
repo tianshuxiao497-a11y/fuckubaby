@@ -1,0 +1,68 @@
+name: Public desktop 0.5.0 acceptance
+on:
+  push:
+    branches: [codex/device-license-public-audit-050]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  authorization:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check active public service and reject fabricated credentials
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {generateKeyPairSync,createHash,randomUUID,sign} from 'node:crypto';
+          const origin='https://adaptive-spot-license-free.xiaotianshu731.workers.dev';
+          const h=await fetch(origin+'/api/health',{redirect:'error',signal:AbortSignal.timeout(30000)});
+          const health=await h.json();
+          assert.equal(h.status,200);assert.equal(health.configured,true);assert.equal(health.version,'0.5.0-device');
+          assert.equal(health.deviceLimit,1);assert.equal(health.concurrentSessionLimit,1);assert.equal(health.mode,'BINANCE_SPOT_TESTNET_ONLY');
+          const post=body=>fetch(origin+'/api/validate',{method:'POST',redirect:'error',signal:AbortSignal.timeout(30000),headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+          const test={licenseKey:'PUBLIC-DEVICE-UNKNOWN-LICENSE-ONLY',session:randomUUID(),nonce:randomUUID(),timestamp:Date.now()};
+          const legacy=await post(test);const rejected=await legacy.json();
+          assert.equal(legacy.status,426);assert.equal(rejected.reason,'client_upgrade_required');assert.equal(rejected.token,undefined);
+          const {privateKey,publicKey}=generateKeyPairSync('ed25519');
+          const body={...test,timestamp:Date.now(),devicePublicKey:publicKey.export({format:'der',type:'spki'}).toString('base64url')};
+          const proof=JSON.stringify(['AdaptiveSpotBot.Device.v2','validate',createHash('sha256').update(body.licenseKey).digest('hex'),body.devicePublicKey,body.session,body.nonce,body.timestamp]);
+          body.deviceSignature=sign(null,Buffer.from(proof),privateKey).toString('base64url');
+          const unknown=await post(body);const denied=await unknown.json();
+          assert.equal(unknown.status,403);assert.equal(denied.active,false);assert.equal(denied.token,undefined);
+          console.log('PUBLIC_AUTH_ACCEPTANCE '+JSON.stringify({checkedAt:new Date().toISOString(),endpoint:origin+'/api/validate',health,legacyUnboundClientRejected:true,unknownLicenseDenied:true,validPaidCustomerActivated:false,realOrders:0,realPayments:0}));
+          NODE
+  downloads:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify complete anonymous buyer downloads
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {createHash} from 'node:crypto';
+          const origin='https://adaptive-spot-downloads.xiaotianshu731.workers.dev';
+          const expected=[
+            ['AdaptiveSpotBot-Buyer-Windows.zip',36184740,'758c0ac5673a13d75e930c221f44418fd94e188de02ab09222c00f825f0ba5e0'],
+            ['AdaptiveSpotBot-Buyer-Mac-arm64.zip',118103786,'13242da85ab8361568aea0bb46c7aacecec420c80fb82b9e2885dddbaa22dc56'],
+            ['AdaptiveSpotBot-Buyer-Mac-x64.zip',122005325,'60cc8f7776b4ac93cf31d8d49df0faa5358c8f4c5b08b283f5f62c6a6e801aef'],
+            ['AdaptiveSpotBot-Buyer-Linux-x64.zip',101291403,'974a166e967432b0fc42a3f7520bef8e794849ea48e014390c1ad2f990841f25']
+          ];
+          const checks=[];
+          for(const [file,bytes,sha256] of expected){
+            const url=origin+'/'+file;
+            const r=await fetch(url,{redirect:'error',signal:AbortSignal.timeout(95000)});
+            assert.equal(r.status,200,file);assert.equal(r.headers.get('x-package-version'),'0.5.0',file);
+            const digest=createHash('sha256');let length=0;
+            for await(const chunk of r.body){digest.update(chunk);length+=chunk.length;assert.ok(length<=bytes,file);}
+            assert.equal(length,bytes,file);assert.equal(digest.digest('hex'),sha256,file);
+            checks.push({file,url,bytes,sha256,fullAnonymousDownloadVerified:true});
+          }
+          console.log('PUBLIC_DOWNLOAD_ACCEPTANCE '+JSON.stringify({checkedAt:new Date().toISOString(),version:'0.5.0',origin,checks,credentialsSent:false}));
+          NODE
