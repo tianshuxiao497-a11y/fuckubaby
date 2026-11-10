@@ -1,0 +1,31 @@
+{
+  "name": "adaptive-spot-bot-desktop",
+  "productName": "Adaptive Spot Bot",
+  "version": "0.5.3",
+  "private": true,
+  "description": "Device-licensed Binance Spot Testnet desktop bot",
+  "main": "src/main.cjs",
+  "author": {"name": "Xiao Tianshu", "email": "tianshuxiao497@gmail.com"},
+  "homepage": "https://whop.com/adaptive-spot-bot/adaptive-spot-bot-testnet/",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --publish never"
+  },
+  "devDependencies": {
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "com.adaptivespotbot.testnet",
+    "asar": true,
+    "directories": {"output": "../../exports/crossplatform-build-0.5.3"},
+    "files": ["src/**", "package.json"],
+    "extraResources": [{"from": "stage/engine", "to": "engine", "filter": ["**/*"]}],
+    "artifactName": "AdaptiveSpotBot-${version}-${os}-${arch}.${ext}",
+    "mac": {"target": ["zip"], "category": "public.app-category.finance", "identity": null, "icon": "../adaptive-spot-desktop/brand.png"},
+    "linux": {"target": ["deb", "tar.gz"], "category": "Education", "icon": "../adaptive-spot-desktop/brand.png"},
+    "win": {"target": ["nsis"], "icon": "../adaptive-spot-desktop/app.ico"},
+    "nsis": {"oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "deleteAppDataOnUninstall": false}
+  }
+}

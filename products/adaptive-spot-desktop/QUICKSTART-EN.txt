@@ -1,0 +1,144 @@
+0.5.2 RECONNECT: The app checks your saved license and connects to Spot Testnet in read-only mode when it opens. Temporary network failures are retried. An account mismatch or an unresolved order needs your review. Verify the account state and click Start to trade.
+
+MULTI-SYMBOL: Refresh markets at the top of the app. The list uses currently tradable USDT Spot Testnet pairs. Run one symbol at a time. Stop and reconcile program positions/pending orders before switching. Reconnect and manually start after switching. BTC keeps the original data path; other symbols use markets/SYMBOL/.paper-data. Order records, dust and risk counters are per symbol, not a shared portfolio risk limit. License and Testnet credentials can be reused.
+
+Adaptive Spot Bot — Testnet Edition
+Windows Desktop Subscription Candidate 0.4.0 (unsigned; production-order acceptance pending)
+
+Replacing an API key on the SAME Spot Testnet account: save the new key and its matching
+PEM/secret, then confirm the account-verification prompt. The app compares authenticated
+account UIDs (or the same authenticated private historical order when Testnet omits UID)
+before preserving all orders, positions and risk counters under the new key.
+Original records and encrypted settings are backed up in account-key-backups in the data folder.
+Unverified identity, a different account, pending orders or an existing trading lock block migration.
+Keep the old API until verification is complete. Renewal/reinstall does not require a new exchange key.
+
+This version uses the Cloudflare licensing endpoint. Safely stop and close the
+old app, then repair/upgrade with this installer. Exchange keys and the existing
+subscription license do not need replacement just because the host changed.
+
+This is the existing adaptive Binance Spot Testnet bot, NOT the separate offline
+EMA replay tool. Virtual funds only. No live-money adapter or withdrawal feature.
+
+REQUIREMENTS
+Windows 10/11 x64 with .NET Framework 4.8. Node.js 24.15.0 is bundled.
+No Node/npm/Python installation, terminal commands or dotenv edits are required.
+You need your own eligible Spot Testnet account and working API connectivity.
+Access restrictions, region refusals and security blocks are not bypassed.
+
+INSTALL
+Check file origin and SHA256SUMS.txt, open AdaptiveSpotBot-Testnet-Setup.exe,
+read the notice, then click Install. It installs for your Windows user without
+requesting administrator rights. It does NOT launch the bot or place orders.
+Click Open trading workspace after installation, or open Adaptive Spot Bot Testnet
+from the desktop or Start menu. The app opens directly to the trading overview.
+Missing data is displayed honestly; no synthetic market or P/L is fabricated.
+Existing 0.1.0 installations can be repaired/upgraded without uninstalling first.
+The old app folder (including unknown additions) is retained as a dated backup;
+the separate private account profile is preserved. Stop/close the app first.
+This preview is unsigned and not Windows-certified. If Windows/security software
+blocks it, stop and verify manually; do not disable antivirus or bypass a block.
+
+ACTIVATE YOUR SUBSCRIPTION
+Open Subscription / 订阅授权 and enter the software license provided through your
+Whop order/license page, NOT a Binance API key. Verification uses the seller's
+fixed HTTPS service. Only the subscription key and random verification/session
+data are sent, never Binance credentials, balances, holdings or trade records.
+The saved license is protected with Windows CurrentUser DPAPI.
+Click Verify and save. A missing/unconfigured service stays explicitly LOCKED;
+no invented license can unlock it. Ask the seller for a production-configured,
+accepted build. A LOCKED-QA archive is offline QA only and must not be sold.
+
+Trading requires fresh online verification before start and rechecks every
+30 seconds while running. Signed leases last at most 120 seconds, NOT a promised
+120-second offline grace period. A failed check (including outage), expiry or
+revocation blocks new work and requests graceful stop. In-flight exchange work
+can still finish; instantaneous stopping is not guaranteed.
+Canceling renewal permits use until the paid term ends, unless the platform
+separately refunds/revokes access early. Expiry stops trading, NOT liquidation
+or order cancellation. LOCAL RISK RULES STOP TOO. You must review/manage Testnet
+holdings and orders yourself. Records, read-only checks and stop remain available.
+No long-term offline license. Renewal/network recovery never auto-restarts trading.
+
+CONFIGURE TESTNET
+Open Connection / 密钥配置. Click Generate / recover local Ed25519 keys. On first use the app
+creates BOTH keys locally and fills the private PEM path automatically. Later clicks recover
+the existing pair. Renewing or resubscribing does not rotate your exchange keys.
+Register ONLY the displayed PUBLIC
+key at https://testnet.binance.vision/, and enter the Testnet API Key returned
+there. The private-key path is filled automatically. Alternatively browse an
+existing Ed25519 PEM, or use HMAC Key + Secret only if Testnet issues one.
+Choose PEM or HMAC, never both. No live Binance keys. Grant only read and Spot
+Testnet trade permissions needed; no withdrawal functionality is provided.
+Save locally, then Test connection, or use Save and connect (read only).
+Saved credentials restore to the LOCAL controller on reopening, without automatic
+network reads or trading. Saving is offline. Connection testing makes
+GET requests only, not an order/test POST. A canTrade=false account cannot start.
+Website login alone does not configure API access. Never send secrets to seller.
+
+START AND MONITOR
+Use a fresh eligible Testnet account with no old bot-owned positions, or obtain
+a reviewed manual migration first. This edition has separate records and does
+not automatically import the old source bot's account state. Stop all other
+copies on the same account; same-directory locks cannot protect other folders
+or computers. Check account holdings before the first start.
+In Overview / 交易总览, check virtual-funds and single-instance confirmations, click Start
+virtual strategy, then confirm the dialog. A fresh online subscription check
+must also pass; only then are virtual orders enabled. canTrade=true alone is
+not subscription authorization.
+The deterministic adaptive/short strategy checks roughly every 5 seconds, using
+EMA/RSI/ATR, closed 5-minute context, momentum/spread/cost gates and conditional
+staged entries. The bot position budget is at most 100 virtual USDT. A check is
+not a guaranteed trade. Local stop-loss, take-profit, trend exits and roughly
+3-minute maximum-hold conditions do not guarantee timing, loss caps or profits.
+The order table contains this desktop profile's bot records, not the account's
+complete trading history. The chart is a line of closed 1-minute close prices,
+not OHLC candlesticks or live ticks. Monitor connectivity and worker state are
+shown separately; a monitor error does not prove the worker stopped.
+Price/balances are read-only snapshots refreshed on
+demand or approximately every 21 seconds. Unverified P/L is not verified net P/L.
+
+STOP / CLOSE / RESTART
+Stop safely and closing request a graceful stop; they do not liquidate holdings
+or cancel exchange orders. Wait for in-flight work and retained pending state.
+The controller requests stop if the GUI disconnects; the worker also requests
+stop if its parent controller disconnects. Power loss or forced termination can
+still interrupt cleanup. Local risk rules cannot run while stopped/offline/asleep.
+No Windows auto-start, unattended error restart, or blind ambiguous-order retry.
+Reopen as the same Windows user; the saved local configuration is restored and
+the saved subscription is checked online. The app reconnects to Testnet in
+read-only mode. Review the account and explicitly start again.
+Retained locks/pending orders require manual reconciliation; never
+delete records, locks or use a fresh folder to force a restart.
+
+DATA / UNINSTALL
+Program: %LOCALAPPDATA%\Programs\AdaptiveSpotBotTestnet
+Private profile: %LOCALAPPDATA%\AdaptiveSpotBot\Testnet
+API Key/HMAC secret/PEM path/subscription key use Windows CurrentUser DPAPI.
+Generated PEM private keys are LOCAL UNENCRYPTED files in the restricted profile
+directory. External PEM permissions remain your responsibility. Administrators
+or malware acting as you can still access secrets. No exchange-key/trade upload
+or additional telemetry. The license service receives the subscription key and
+random session/verification data solely for entitlement checks.
+Uninstall from Windows Installed Apps only after stopping and closing the bot.
+Only unchanged, manifest-listed program files/owned shortcuts are removed.
+Credentials, trading records, inventory and safety locks are preserved; empty
+directories and the temporary uninstaller can remain. Stop and review records
+before an upgrade; then use the new installer's repair/upgrade option without
+uninstalling 0.1.0 first. Profile data is kept. No old-source-bot record migration.
+
+RELEASE STATUS
+Technical preview, not a certified or completed commercial release. No code
+signing, independent clean-PC compatibility acceptance, or account/order smoke
+test was performed for this package. Subscription validation code is included,
+but missing production configuration locks trading. Seller must provision and
+accept the real service/Whop software licenses and test purchase, renewal,
+cancellation-at-term, expiry/refund/revocation, outage stop and manual restart
+end-to-end before sale. A build or offline QA pass is not commercial acceptance.
+Installing 0.3.0 does NOT remotely stop already-distributed 0.2.0 or old source
+copies. Local software is not tamper-proof DRM. Do not distribute those older
+editions as subscription-enforced releases. The separate developer source ZIP
+includes the original standalone CLI; do not use it as the subscription buyer
+download. Buyers need the production-configured, accepted installer only.
+Seller must finalize licensing, update/support scope, privacy/refund terms and
+platform/payout eligibility. Future live trading is not included.
