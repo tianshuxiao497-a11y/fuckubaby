@@ -102,7 +102,12 @@ export async function build({ node, license, now = new Date(), staging = false }
   const checksum = Buffer.from(`${sha(setupBytes)}  ${setupName}\n`);
   const qaNotice={path:'LOCKED-QA-DO-NOT-SELL.txt',data:Buffer.from('LOCKED QA ONLY — NOT AN ACTIVATED BUYER RELEASE\r\nThis package intentionally has no license-service configuration. It cannot start trading. Do not publish it as a paid active product.\r\n仅供离线验收，未配置授权服务，交易锁定，不可作为已激活商品销售。\r\n')};
   if(staging) await writeFile(resolve(output,qaNotice.path),qaNotice.data,{flag:'wx'});
-  const buyer = archive([{path:setupName,data:setupBytes}, ...guides, ...['EXTERNAL-STRATEGIES.md','example-external-strategy.json'].map(n=>({path:'Guides/'+n,data:desktop.find(e=>e.path.endsWith('/'+n)).data})), {path:'SHA256SUMS.txt',data:checksum},...(staging?[qaNotice]:[])]);
+  const strategyGuides = await Promise.all(['EXTERNAL-STRATEGIES.md','example-external-strategy.json'].map(async n=>{
+    const path=file(n), stat=await lstat(path);
+    if(!stat.isFile()||stat.isSymbolicLink()||await realpath(path)!==path||stat.size>8192)throw new Error('Invalid buyer strategy documentation.');
+    return {path:'Guides/'+n,data:await readFile(path)};
+  }));
+  const buyer = archive([{path:setupName,data:setupBytes}, ...guides, ...strategyGuides, {path:'SHA256SUMS.txt',data:checksum},...(staging?[qaNotice]:[])]);
   const sourceEntries = [...sources, ...desktop, {path:'DESKTOP-START-HERE.md',data:desktopFirstReadme(staging)}];
   sourceEntries.push({path:'SOURCE_MANIFEST.json',data:Buffer.from(JSON.stringify(sourceManifest(sourceEntries),null,2)+'\n')});
   const source = archive(sourceEntries);
