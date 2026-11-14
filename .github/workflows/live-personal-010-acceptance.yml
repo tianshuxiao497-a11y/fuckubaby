@@ -1,0 +1,37 @@
+name: Personal live Spot 0.1.0 offline native acceptance
+on:
+  push:
+    branches: [codex/live-personal-010]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Offline execution, accounting and local UI regressions
+        run: node --test products/spot-live-pilot/live/live.test.mjs tests/testnet-adaptive.test.mjs
+      - name: Native program starts unconfigured and cannot trade at launch
+        run: node scripts/smoke-live-personal.mjs
+      - name: Package only the fixed public source allowlist and native runtime
+        run: python scripts/package-live-personal.py --native-offline-verified
+      - uses: actions/upload-artifact@v4
+        with:
+          name: live-personal-010-${{ matrix.os }}
+          path: |
+            exports/AdaptiveSpotBot-Live-Personal-0.1.0/*.zip
+            exports/AdaptiveSpotBot-Live-Personal-0.1.0/RESULT-*.json
+            exports/live-personal-native-smoke.json
+          retention-days: 7

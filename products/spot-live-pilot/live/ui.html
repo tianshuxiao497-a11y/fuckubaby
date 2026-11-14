@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Adaptive Spot Bot · Live Personal</title><link rel="stylesheet" href="/ui.css"><script src="/ui.js" defer></script></head>
+<body>
+<header><div class="brand"><span class="mark">↗</span><div>ADAPTIVE SPOT BOT<small>Live Personal · 真实现货</small></div></div><span class="pill">BINANCE SPOT MAINNET</span></header>
+<main>
+<section class="hero"><div><p class="eyebrow">YOUR STRATEGY, YOUR CONTROL</p><h1>看见每一次判断。<br><em>掌握每一笔成交。</em></h1><p>多币种现货、自适应信号、外置规则和费用后的权益跟踪。</p></div><aside><b id="running">待配置</b><p id="notice">先保存本机配置，再只读核对账户。</p><p class="muted">当前版本 0.1.0-personal · 内置买入默认 1%</p></aside></section>
+<section class="stats"><article><small>程序权益 · USDT</small><strong id="equity">—</strong></article><article><small>当日损益 · UTC+8</small><strong id="pnl">—</strong></article><article><small>当日权益回撤</small><strong id="loss">—</strong></article><article><small>已核对真实委托</small><strong id="count">0</strong></article></section>
+<section class="panel"><div class="sectionhead"><div><p class="eyebrow">01 / CONNECT</p><h2>正式现货账户</h2></div><span class="tag">本机加密保存</span></div>
+<p class="muted">在币安官方创建正式现货 API，启用读取和现货交易权限。这里使用独立的实盘配置与资金账本。</p>
+<div class="grid"><label>正式 API Key<input id="key" type="password" autocomplete="off"></label><label>HMAC Secret<input id="secret" type="password" autocomplete="off" placeholder="使用 PEM 时留空"></label></div>
+<label>Ed25519 私钥 PEM<textarea id="pem" rows="2" spellcheck="false" placeholder="使用 HMAC 时留空"></textarea></label>
+<div class="row"><label class="file">选择 PEM<input id="pem-file" type="file" accept=".pem"></label><button id="generate" class="secondary">生成实盘注册公钥</button></div><pre id="public-key" hidden></pre>
+<div class="grid three"><label>USDT 现货交易对<input id="symbol" value="BTCUSDT" list="symbols"><datalist id="symbols"></datalist></label><label>每次买入使用可用 USDT 的百分比<input id="percent" type="number" min="0.01" max="100" step="0.01" value="1"></label><label>每日停买线<input value="20% · 北京时间零点起算" disabled></label></div>
+<p class="muted">仓位比例由用户确认。低于币安最低订单额时等待，不会自动提高买入金额。已有手动持仓继续由你自行管理。</p>
+<div class="grid"><label>本机保险箱密码 · 至少 12 字符<input id="password" type="password" autocomplete="off"></label><label>首次保存时再次输入密码<input id="password-repeat" type="password" autocomplete="off"></label></div>
+<div class="row"><button id="save">保存本机配置</button><button id="unlock" class="secondary">解锁已有配置</button><button id="catalog" class="secondary">刷新正式币种</button><button id="check" class="secondary">只读核对账户与信号</button><button id="reconcile" class="secondary">核对并撤销遗留的本程序委托</button></div>
+</section>
+<section class="grid"><article class="panel"><p class="eyebrow">02 / STRATEGY</p><h2>自己的规则，清楚的判断</h2><p id="strategy">内置自适应 EMA / RSI / ATR</p><p class="muted">兼容原有 v1 策略。v2 文件还可指定仓位比例，20% 停买线始终生效。</p><label class="file">导入 JSON 策略<input id="strategy-file" type="file" accept=".json"></label><button id="reset-strategy" class="secondary">恢复内置策略</button><p id="signal" class="signal">等待账户核对</p><p id="blocker" class="muted"></p></article>
+<article class="panel"><p class="eyebrow">03 / EXECUTE</p><h2>由你启动真实交易</h2><p>每五秒检查一次信号。限价 IOC 控制委托价格，订单结果不明时暂停并核对。</p><label>输入 START REAL SPOT TRADING<input id="confirmation" autocomplete="off" spellcheck="false"></label><div class="row"><button id="start">启动实盘策略</button><button id="stop" class="danger">立即停止新委托</button></div><p class="muted">达到每日 20% 亏损线后，当天锁定新增买入，程序继续管理本程序持仓的退出。网络和跳价可能使实际损失超过阈值。</p></article></section>
+<section class="panel"><div class="sectionhead"><div><p class="eyebrow">04 / REVIEW</p><h2>成交记录与客户复盘</h2></div><button id="review" class="secondary">导出复盘方案</button></div><p class="muted">报告包含成交、费用、损益与最新信号，供你和客户讨论。新思路由用户确认后再应用。</p><div class="tablewrap"><table><thead><tr><th>时间</th><th>币种</th><th>方向</th><th>成交数量</th><th>成交 USDT</th><th>订单状态</th></tr></thead><tbody id="orders"><tr><td colspan="6">尚无本程序核验的真实委托</td></tr></tbody></table></div></section>
+<footer>ADAPTIVE SPOT BOT · LOCAL-FIRST PERSONAL LIVE PILOT <span>权益统计覆盖本程序资金账本 · 首日从建账时刻计起</span></footer>
+</main></body></html>

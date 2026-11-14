@@ -1,0 +1,21 @@
+{
+  "version": 2,
+  "name": "My live rules",
+  "sizing": { "buyPercent": 1 },
+  "entry": {
+    "match": "all",
+    "rules": [
+      { "left": "fast", "op": ">", "right": "slow" },
+      { "left": "rsi", "op": ">=", "right": 45 },
+      { "left": "rsi", "op": "<=", "right": 70 },
+      { "left": "momentumPercent", "op": ">", "right": 0 }
+    ]
+  },
+  "exit": {
+    "match": "any",
+    "rules": [
+      { "left": "fast", "op": "<", "right": "slow" },
+      { "left": "rsi", "op": "<", "right": 40 }
+    ]
+  }
+}
