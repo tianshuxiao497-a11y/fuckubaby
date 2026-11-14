@@ -108,11 +108,25 @@ internal static class InstallerCore {
             return true;
         } catch { return false; }
     }
+    // Older uninstallers deliberately preserve their own executable and empty
+    // directories. Recognize only byte-identical installers we have built, so
+    // repair can retain that residue in a backup without trusting a filename.
+    static bool KnownUninstallerResidue(string path) {
+        string uninstall = Path.Combine(path, "Uninstall.exe");
+        if (!File.Exists(uninstall)) return false;
+        string hash = Shared.Hash(uninstall);
+        if (hash == Shared.Hash(Assembly.GetExecutingAssembly().Location)) return true;
+        return hash == "7dab8ba071cbb005c77a16c6953d3867a9fa9c20728e3c3ef84f5e33232961fd" // 0.5.1
+            || hash == "af9a1bfd14489455593f5fbeb27b824d7347de4826864a1d6f356cc1db884d72" // 0.5.2 build 1
+            || hash == "15875d4434e8f13bc04ea8ae56dd3d8f730001213b26dc1a336192b85a994746" // 0.5.2 build 2
+            || hash == "adb3b476293f7e3163b0e953a6a11404148521af9b61e30546de3a5b37184c98" // 0.5.3 build 1
+            || hash == "f6cdc0496a2114628611e49c19e47de4cae1fc30634136d04032ce765a55580c"; // 0.5.3 published
+    }
     static void ReviewExisting(string path) {
         if (!Directory.Exists(path)) return; NoLinkedTree(path);
         if (Directory.GetFileSystemEntries(path).Length == 0) return;
         bool recognized = File.Exists(Path.Combine(path, "INSTALL-MANIFEST.json")) || File.Exists(Path.Combine(path, "AdaptiveSpotBot.exe")) || File.Exists(Path.Combine(path, "node.exe")) && Directory.Exists(Path.Combine(path, "engine"));
-        if (!recognized) throw new IOException("The target contains unrelated files and is not a recognized bot installation. Nothing was overwritten.");
+        if (!recognized && !KnownUninstallerResidue(path)) throw new IOException("The target contains unrelated files and is not a recognized bot installation. Nothing was overwritten.");
     }
     static FileStream IdleLock(string profile) {
         NoLinkedTree(profile); Directory.CreateDirectory(profile);
@@ -248,6 +262,18 @@ internal static class InstallerCore {
             Install(options); if (!ValidApplication(install) || !CurrentApplication(install)) throw new Exception("Fresh install checksum failure.");
             string unknown = Path.Combine(install, "user-notes.txt"); File.WriteAllText(unknown, "DO-NOT-DELETE"); var repair = Install(options);
             if (!ValidApplication(install) || File.ReadAllText(Path.Combine(repair.Backup, "user-notes.txt")) != "DO-NOT-DELETE") throw new Exception("Repair did not retain unknown files.");
+            string residue = Path.Combine(directory, "Programs", "UninstalledBot"); Directory.CreateDirectory(Path.Combine(residue, "engine", "lib"));
+            File.Copy(options.Setup, Path.Combine(residue, "Uninstall.exe")); File.WriteAllText(Path.Combine(residue, "user-notes.txt"), "RETAIN-RESIDUE-NOTES");
+            var residueOptions = new Options { Install = residue, Profile = profile, Setup = options.Setup, Extract = VerifyAndExtract };
+            var residueRepair = Install(residueOptions);
+            if (!CurrentApplication(residue) || Shared.Hash(Path.Combine(residueRepair.Backup, "Uninstall.exe")) != Shared.Hash(options.Setup)
+                || File.ReadAllText(Path.Combine(residueRepair.Backup, "user-notes.txt")) != "RETAIN-RESIDUE-NOTES") throw new Exception("Known uninstaller residue repair did not preserve the old tree.");
+            string unrelatedDirectory = Path.Combine(directory, "Programs", "Unrelated"); Directory.CreateDirectory(Path.Combine(unrelatedDirectory, "engine"));
+            File.WriteAllText(Path.Combine(unrelatedDirectory, "Uninstall.exe"), "UNRELATED-EXECUTABLE-NAME");
+            var unrelatedOptions = new Options { Install = unrelatedDirectory, Profile = profile, Setup = options.Setup, Extract = VerifyAndExtract };
+            bool unrelatedRefused = false; try { Install(unrelatedOptions); } catch (IOException) { unrelatedRefused = true; }
+            if (!unrelatedRefused || File.ReadAllText(Path.Combine(unrelatedDirectory, "Uninstall.exe")) != "UNRELATED-EXECUTABLE-NAME"
+                || File.Exists(Path.Combine(unrelatedDirectory, "AdaptiveSpotBot.exe"))) throw new Exception("Unrelated uninstaller-name directory was not preserved.");
             string hash = Shared.Hash(Path.Combine(install, "AdaptiveSpotBot.exe")); options.AfterStage = p => { throw new IOException("injected staging failure"); };
             bool refused = false; try { Install(options); } catch (IOException) { refused = true; }
             if (!refused || hash != Shared.Hash(Path.Combine(install, "AdaptiveSpotBot.exe"))) throw new Exception("Staging failure changed existing install.");
@@ -262,7 +288,7 @@ internal static class InstallerCore {
             string marketData=Path.Combine(profile,"markets","ETHUSDT",".paper-data");Directory.CreateDirectory(marketData);string marketLock=Path.Combine(marketData,"testnet-bot.lock");File.WriteAllText(marketLock,"offline-eth-lock");
             refused=false;try{Install(options);}catch(IOException){refused=true;}if(!refused||File.ReadAllText(marketLock)!="offline-eth-lock")throw new Exception("Market safety lock was not preserved.");File.Delete(marketLock);
             if (File.ReadAllText(privateRecord) != "OFFLINE-TEST-DATA-NOT-A-KEY") throw new Exception("Profile data changed.");
-            File.WriteAllText(Path.Combine(directory, "RESULT.txt"), "PASS: fresh install; repeat repair; retained old/unknown files; staging failure preservation; activation rollback; active GUI lock refusal; retained bot lock refusal; idempotent own shortcut repair; unrelated shortcut preservation; fake profile preserved. No real profile, registry, network, account, orders or app launch.\r\n", Encoding.UTF8); return 0;
+            File.WriteAllText(Path.Combine(directory, "RESULT.txt"), "PASS: fresh install; repeat repair; known uninstaller-only residue recovery with retained backup; unrelated uninstaller-name folder refusal; retained old/unknown files; staging failure preservation; activation rollback; active GUI lock refusal; retained bot lock refusal; idempotent own shortcut repair; unrelated shortcut preservation; fake profile preserved. No real profile, registry, network, account, orders or app launch.\r\n", Encoding.UTF8); return 0;
         } catch (Exception e) { try { if (created) File.WriteAllText(Path.Combine(directory, "FAILED.txt"), e.ToString(), Encoding.UTF8); } catch { } return 1; }
     }
 }
