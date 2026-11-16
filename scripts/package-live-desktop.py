@@ -38,7 +38,8 @@ with ZipFile(destination, 'w', ZIP_DEFLATED) as z:
     else:
         extension = 'exe' if system == 'Windows' else 'deb'
         os_name = 'win' if system == 'Windows' else 'linux'
-        target = build / f'AdaptiveSpotBot-Live-0.2.0-{os_name}-{arch}.{extension}'
+        package_arch = 'amd64' if system == 'Linux' and arch == 'x64' else arch
+        target = build / f'AdaptiveSpotBot-Live-0.2.0-{os_name}-{package_arch}.{extension}'
         assert target.is_file()
         z.write(target, target.name)
         sums.append(sha256(target.read_bytes()).hexdigest() + '  ' + target.name)

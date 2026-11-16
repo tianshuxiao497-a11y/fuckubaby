@@ -4,6 +4,7 @@
   "version": "0.2.0",
   "private": true,
   "description": "Personal self-run Binance Spot mainnet desktop bot",
+  "homepage": "https://github.com/tianshuxiao497-a11y/fuckubaby",
   "main": "src/main.cjs",
   "author": {"name": "Xiao Tianshu", "email": "tianshuxiao497@gmail.com"},
   "license": "UNLICENSED",
