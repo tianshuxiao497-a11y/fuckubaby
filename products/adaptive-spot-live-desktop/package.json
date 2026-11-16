@@ -1,0 +1,24 @@
+{
+  "name": "adaptive-spot-bot-live-personal",
+  "productName": "Adaptive Spot Bot Live",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Personal self-run Binance Spot mainnet desktop bot",
+  "main": "src/main.cjs",
+  "author": {"name": "Xiao Tianshu", "email": "tianshuxiao497@gmail.com"},
+  "license": "UNLICENSED",
+  "scripts": {"dist": "electron-builder --publish never"},
+  "devDependencies": {"electron": "45.2.3", "electron-builder": "26.18.0"},
+  "build": {
+    "appId": "com.adaptivespotbot.livepersonal",
+    "asar": true,
+    "directories": {"output": "../../exports/live-desktop-build-0.2.0"},
+    "files": ["src/**", "package.json"],
+    "extraResources": [{"from": "stage/app-runtime", "to": "app-runtime", "filter": ["**/*"]}],
+    "artifactName": "AdaptiveSpotBot-Live-${version}-${os}-${arch}.${ext}",
+    "win": {"target": ["zip", "nsis"], "icon": "../adaptive-spot-desktop/app.ico"},
+    "nsis": {"oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "deleteAppDataOnUninstall": false, "shortcutName": "Adaptive Spot Bot Live"},
+    "mac": {"target": ["zip"], "category": "public.app-category.finance", "identity": null, "icon": "../adaptive-spot-desktop/brand.png"},
+    "linux": {"target": ["deb", "tar.gz"], "category": "Finance", "icon": "../adaptive-spot-desktop/brand.png"}
+  }
+}
