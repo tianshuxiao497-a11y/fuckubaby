@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "format": "AdaptiveFuturesBot",
+  "name": "Futures EMA RSI two directions",
+  "long": {
+    "entry": {"match": "all", "rules": [{"left": "fast", "op": ">", "right": "slow"}, {"left": "rsi", "op": ">=", "right": 45}, {"left": "rsi", "op": "<=", "right": 75}, {"left": "volumeRatio", "op": ">=", "right": 0.8}]},
+    "exit": {"match": "any", "rules": [{"left": "fast", "op": "<", "right": "slow"}, {"left": "positionReturnPercent", "op": ">=", "right": 2}]}
+  },
+  "short": {
+    "entry": {"match": "all", "rules": [{"left": "fast", "op": "<", "right": "slow"}, {"left": "rsi", "op": ">=", "right": 25}, {"left": "rsi", "op": "<=", "right": 55}, {"left": "volumeRatio", "op": ">=", "right": 0.8}]},
+    "exit": {"match": "any", "rules": [{"left": "fast", "op": ">", "right": "slow"}, {"left": "positionReturnPercent", "op": ">=", "right": 2}]}
+  },
+  "risk": {"stopLossPercent": 1, "takeProfitPercent": 2, "trailingPercent": 0.5}
+}

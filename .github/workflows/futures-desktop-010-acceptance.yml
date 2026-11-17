@@ -1,0 +1,91 @@
+name: Futures Personal Desktop 0.1.0 native offline acceptance
+on:
+  push:
+    branches: [codex/futures-desktop-010]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: win
+            arch: x64
+          - os: ubuntu-24.04
+            target: linux
+            arch: x64
+          - os: macos-15
+            target: mac
+            arch: arm64
+          - os: macos-15-intel
+            target: mac
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Offline order accounting, stop, reconnect and strategy regressions
+        run: node --test products/futures-live-pilot/live/*.test.mjs
+      - name: Stage only public runtime source
+        run: node scripts/stage-futures-desktop.mjs
+      - name: Install pinned desktop dependencies
+        working-directory: products/adaptive-futures-desktop
+        run: npm ci --no-audit --no-fund
+      - name: Fetch official native Electron runtime
+        working-directory: products/adaptive-futures-desktop
+        run: node node_modules/electron/install.js
+      - name: Build native unpacked application
+        working-directory: products/adaptive-futures-desktop
+        run: npx electron-builder --${{ matrix.target }} --${{ matrix.arch }} --dir --publish never
+      - name: Enable Chromium sandbox in the disposable Linux runner
+        if: runner.os == 'Linux'
+        run: |
+          sudo chown root:root "exports/futures-desktop-build-0.1.0/linux-unpacked/chrome-sandbox"
+          sudo chmod 4755 "exports/futures-desktop-build-0.1.0/linux-unpacked/chrome-sandbox"
+      - name: Test packaged Windows app without credentials
+        if: runner.os == 'Windows'
+        run: node scripts/native-futures-desktop-smoke.mjs "exports/futures-desktop-build-0.1.0/win-unpacked/Adaptive Futures Bot.exe" "exports/futures-native-qa-Windows-x64"
+      - name: Test packaged Linux app without credentials
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/native-futures-desktop-smoke.mjs "exports/futures-desktop-build-0.1.0/linux-unpacked/adaptive-futures-bot-personal" "exports/futures-native-qa-Linux-x64"
+      - name: Test packaged Mac app without credentials
+        if: runner.os == 'macOS'
+        run: node scripts/native-futures-desktop-smoke.mjs "exports/futures-desktop-build-0.1.0/mac${{ matrix.arch == 'arm64' && '-arm64' || '' }}/Adaptive Futures Bot.app/Contents/MacOS/Adaptive Futures Bot" "exports/futures-native-qa-Mac-${{ matrix.arch }}"
+      - name: Build native installer and distributable
+        working-directory: products/adaptive-futures-desktop
+        run: npx electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never
+      - name: Test installed Debian package in the disposable runner
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y ./exports/futures-desktop-build-0.1.0/*.deb
+          xvfb-run -a node scripts/native-futures-desktop-smoke.mjs "/usr/bin/adaptive-futures-bot-personal" "exports/futures-native-qa-Linux-installed-x64"
+      - name: Package native app with Chinese and English guides
+        run: python scripts/package-futures-desktop.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: futures-desktop-010-qa-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            exports/futures-native-qa-*/RESULT.json
+            exports/futures-native-qa-*/FAILED.txt
+            exports/futures-native-qa-*/DESKTOP-PREVIEW.png
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: futures-desktop-010-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            exports/AdaptiveFuturesBot-Desktop-0.1.0/*.zip
+            exports/AdaptiveFuturesBot-Desktop-0.1.0/RESULT-*.json
+          retention-days: 7

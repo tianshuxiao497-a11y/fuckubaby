@@ -1,0 +1,72 @@
+{
+  "name": "adaptive-futures-bot-personal",
+  "productName": "Adaptive Futures Bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal self-run Binance USD-M and COIN-M perpetual futures desktop bot",
+  "homepage": "https://github.com/tianshuxiao497-a11y/fuckubaby",
+  "main": "src/main.cjs",
+  "author": {
+    "name": "Xiao Tianshu",
+    "email": "tianshuxiao497@gmail.com"
+  },
+  "license": "UNLICENSED",
+  "scripts": {
+    "dist": "electron-builder --publish never"
+  },
+  "devDependencies": {
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "com.adaptivespotbot.futurespersonal",
+    "asar": true,
+    "directories": {
+      "output": "../../exports/futures-desktop-build-0.1.0"
+    },
+    "files": [
+      "src/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "stage/app-runtime",
+        "to": "app-runtime",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "artifactName": "AdaptiveFuturesBot-${version}-${os}-${arch}.${ext}",
+    "win": {
+      "target": [
+        "zip",
+        "nsis"
+      ],
+      "icon": "../adaptive-spot-desktop/app.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "shortcutName": "Adaptive Futures Bot"
+    },
+    "mac": {
+      "target": [
+        "zip"
+      ],
+      "category": "public.app-category.finance",
+      "identity": null,
+      "icon": "../adaptive-spot-desktop/brand.png"
+    },
+    "linux": {
+      "target": [
+        "deb",
+        "tar.gz"
+      ],
+      "category": "Finance",
+      "icon": "../adaptive-spot-desktop/brand.png"
+    }
+  }
+}

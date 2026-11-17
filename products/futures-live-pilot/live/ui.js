@@ -1,0 +1,61 @@
+'use strict';
+const $=id=>document.getElementById(id),token=location.hash.slice(1);history.replaceState(null,'',location.pathname);
+let current=null,privatePem='',external=null,busy=false,editing=false;
+const titles={workspace:'合约总览 / Workspace',setup:'账户与合约 / Connection & risk',edition:'版本与授权 / Edition',logs:'运行记录 / Activity',help:'使用说明 / Help'};
+const messages={EXPLICIT_FUTURES_START_REQUIRED:'请完整输入 START REAL FUTURES TRADING。',EXPLICIT_MARGIN_AND_LEVERAGE_CONFIRMATION_REQUIRED:'请完整输入 APPLY FUTURES SETTINGS。',SAVE_OR_UNLOCK_FUTURES_CONFIGURATION:'请先保存或解锁本机配置。',MATCHING_FUTURES_VAULT_PASSWORDS_REQUIRED:'首次保存的两次密码须一致，且至少 12 字符。',DAILY_USDT_EQUITY_LOSS_20_PERCENT:'当日回撤超过 20%，当天停止新增仓位。',CONTRACT_MARGIN_OR_LEVERAGE_SETTINGS_DIFFER:'本机选择与币安实际保证金模式或杠杆不同，请先空仓核对后应用。',APPLY_SELECTED_CONTRACT_SETTINGS_FIRST:'请先核对并应用所选的保证金模式和杠杆。',FLAT_STOPPED_RECONCILED_FUTURES_PROFILE_REQUIRED:'请先停止策略，确认空仓且没有待核对的委托。',UNMANAGED_OR_CHANGED_FUTURES_POSITION:'发现其他持仓或仓位变化，已停止。请先到币安核对。',FUTURES_POSITION_DIFFERS_FROM_OWNED_LEDGER:'币安持仓与本机记录不一致。请到币安核对，保留本机记录。',EXCHANGE_PROTECTION_QUERY_UNAVAILABLE:'当前账户的条件止损查询未通过；保持停止，不能开仓。',EXCHANGE_PROTECTION_QUERY_NOT_VERIFIED:'无法确认交易所止损查询能力，不能开仓。',FUTURES_WALLET_DIFFERS_FROM_LEDGER:'钱包变化与本程序账本不一致，请核对外部交易、转账和费用。',FUTURES_READ_ONLY_RECONNECT_WAIT:'连接中断，正在只读重试；不会自动恢复交易。',CLOSED_POSITION_REENTRY_COOLDOWN:'平仓后等待至少一分钟再开新仓。',HOURLY_FUTURES_ENTRY_LIMIT:'已达到每小时六次新开仓的限制。',ISOLATED_AUTO_ADD_MARGIN_MUST_BE_DISABLED:'请先在币安关闭本合约的逐仓自动追加保证金。',FUTURES_ACTION_IN_PROGRESS:'正在处理上一项操作，请稍候。',STANDARD_SINGLE_ASSET_FUTURES_MODE_REQUIRED:'需要标准合约账户及 U 本位单资产保证金模式。'};
+const message=code=>messages[code]??code??'—';
+const num=(value,digits=4)=>value===null||value===undefined?'—':Number(value).toLocaleString(undefined,{maximumFractionDigits:digits});
+const when=value=>value?new Date(value).toLocaleString(): '—';
+function showTab(tab){document.querySelectorAll('[data-view]').forEach(node=>{node.hidden=node.dataset.view!==tab;});document.querySelectorAll('[data-tab]').forEach(node=>node.classList.toggle('active',node.dataset.tab===tab));$('page-title').textContent=titles[tab];}
+document.querySelectorAll('[data-tab],[data-open]').forEach(node=>node.addEventListener('click',()=>showTab(node.dataset.tab??node.dataset.open)));
+async function api(path,body){const response=await fetch('/api/'+path,{method:body===undefined?'GET':'POST',headers:{'x-asbf-session':token,...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});const value=await response.json();if(!response.ok)throw new Error(value.error??'FUTURES_ACTION_FAILED');return value;}
+function formSettings(){return {market:$('market').value,symbol:$('symbol').value.trim().toUpperCase(),marginMode:$('margin-mode').value,leverage:Number($('leverage').value),marginPercent:Number($('percent').value),directionMode:$('direction').value,dailyLossPercent:20,externalStrategy:external};}
+function formCredentials(){const pem=$('pem').value.trim()||privatePem;return {apiKey:$('key').value.trim(),...($('secret').value?{apiSecret:$('secret').value.trim()}:{privateKeyPem:pem})};}
+function savedForm(){return {password:$('password').value,settings:formSettings(),preferences:{autoConnect:$('auto-connect').checked}};}
+function table(id,rows){const target=$(id);target.replaceChildren();for(const values of rows){const tr=document.createElement('tr');for(const value of values){const td=document.createElement('td');td.textContent=value??'—';tr.append(td);}target.append(tr);}}
+function chart(rows){const data=(rows??[]).slice(-60),points=data.map(row=>Number(Array.isArray(row)?row[4]:row.close));if(points.length<2||points.some(p=>!Number.isFinite(p))){$('chart-line').setAttribute('d','');return;}const min=Math.min(...points),span=Math.max(...points)-min||Math.max(min*.001,1);$('chart-line').setAttribute('d',points.map((price,i)=>(i?'L':'M')+(10+i*780/(points.length-1)).toFixed(2)+','+(230-(price-min)*210/span).toFixed(2)).join(' '));}
+function render(state){
+  current=state;const s=state.snapshot,p=s?.position,plan=s?.plan;
+  $('running').textContent=state.running?'自动策略运行中 / Running':state.unlocked?'已解锁 · 策略已停止':'待解锁或配置';
+  $('notice').textContent=state.error?message(state.error):state.reconnecting?'正在只读重连；恢复后需亲自重新启动。':state.connected?'账户已只读核对。启动策略将使用真实资金；停止后交易所已接受的止损仍保留。':'先配置本人合约账户并只读核对，保存配置不会开始交易。';
+  $('connection-state').textContent=state.connected?'已连接 / Connected':state.reconnecting?'只读重连':'未连接';
+  $('start').disabled=busy||!state.unlocked||!state.connected||state.running||state.pending||(!p&&!!s?.blocker)||$('confirmation').value!=='START REAL FUTURES TRADING';
+  $('close-position').disabled=busy||!state.connected||!p||state.pending||$('confirmation').value!=='START REAL FUTURES TRADING';
+  for(const id of ['check','reconcile','history','review','apply-settings','contract-settings','strategy-file','reset-strategy','lock'])$(id).disabled=busy||!state.unlocked;
+  $('equity').textContent=num(s?.equityUsdt);$('pnl').textContent=s?num(Number(s.equityUsdt)-Number(s.day.baselineUsdt)):'—';$('loss').textContent=s?num(Math.max(0,s.lossPercent),2)+'%':'—';$('count').textContent=String(s?.realOrderCount??0);
+  $('chart-symbol').textContent=s?s.symbol+' · '+(s.market==='USD_M'?'U 本位':'币本位'):'等待行情';$('mark-price').textContent=num(s?.markPrice,8);$('funding').textContent=s?.fundingRate!==null&&s?.fundingRate!==undefined?num(Number(s.fundingRate)*100,6)+'%':'—';$('funding-time').textContent=when(s?.nextFundingTime);chart(s?.candles);
+  $('chart-note').textContent=s?'已收盘的一分钟行情；权益与持仓以账户核对结果为准。':'只显示实际合约行情。';
+  $('position').textContent=p?`${p.direction==='LONG'?'多仓 / Long':'空仓方向 / Short'} · ${p.symbol} · ${p.quantity} · 入场 ${p.entryPrice}`:'无持仓 / Flat';$('liquidation').textContent=num(s?.liquidationPrice,8);
+  $('protection').textContent=s?.protection?`交易所止损已核对 · ${s.protection.triggerPrice} · ${s.protection.status}`:p?'持仓尚无已确认的交易所止损，请立即核对。':'无程序持仓止损';
+  $('signal').textContent=s?.signal?`${s.signal.intent??'等待 / Wait'} · ${s.signal.reason??''}`:'等待核对';$('blocker').textContent=s?.blocker?message(s.blocker):'';
+  $('planned-margin').textContent=plan?.allocation?`${plan.allocation.initialMargin} ${s.marginAsset}（预算 ${plan.allocation.targetMarginUsdt} USDT）`:'—';$('planned-notional').textContent=plan?.allocation?`${plan.allocation.notionalUsdt} USDT`:'—';$('planned-fees').textContent=plan?.allocation?`${plan.allocation.reservedRoundTripFees} ${s.marginAsset}`:'—';$('actual-settings').textContent=s?`${s.configuration.marginMode} / ${s.configuration.leverage}× / ${s.hedge?'双向':'单向'}`:'—';
+  $('strategy').textContent=state.settings?.externalStrategy?.name??'内置双向 EMA / RSI / ATR';
+  table('orders',(s?.orders??[]).toReversed().map(row=>[when(row.time),row.market+' / '+row.symbol,row.intent,row.quantity,row.positionSide,row.status]));table('activity',(state.logs??[]).toReversed().map(row=>[when(row.time),row.event,message(row.code)]));
+  $('last-updated').textContent=s?'最近核对 '+when(s.checkedAt):'本机运行 · 尚未核对';
+}
+function fillSettings(state){if(!state.settings)return;const s=state.settings;external=s.externalStrategy;for(const [id,value] of Object.entries({market:s.market,symbol:s.symbol,'margin-mode':s.marginMode,leverage:s.leverage,percent:s.marginPercent,direction:s.directionMode}))$(id).value=value;$('auto-connect').checked=state.preferences.autoConnect;editing=false;}
+async function act(name,body={},after){if(busy)return;busy=true;if(current)render(current);try{const state=await api(name,body);if(state.version){render(state);if(['save','unlock','settings','strategy'].includes(name))fillSettings(state);}if(after)await after(state);}catch(error){$('notice').textContent=message(error.message);}finally{busy=false;if(current)renderButtons();}}
+function renderButtons(){const notice=$('notice').textContent;render(current);$('notice').textContent=notice;}
+for(const id of ['market','symbol','margin-mode','leverage','percent','direction','auto-connect'])$(id).addEventListener('input',()=>{editing=true;});
+$('confirmation').addEventListener('input',()=>{if(current)renderButtons();});
+$('market').addEventListener('change',()=>{$('symbol').value=$('market').value==='USD_M'?'BTCUSDT':'BTCUSD_PERP';$('leverage').value='';$('preflight-result').textContent='合约类型已变，请重新读取设置。';$('symbols').replaceChildren();});
+$('pem-file').addEventListener('change',async()=>{const f=$('pem-file').files[0];if(!f)return;if(f.size>16384)return void($('notice').textContent='PEM 文件过大。');privatePem=await f.text();$('secret').value='';$('notice').textContent='RSA PEM 已在内存中准备，保存后加密到本机。';});
+$('generate').onclick=()=>act('generate-key',{password:$('password').value},value=>{privatePem=value.privateKeyPem;$('secret').value='';$('public-key').textContent=value.publicKey;$('public-key').hidden=false;$('copy-public').hidden=false;$('notice').textContent=value.reused?'已找回同一 RSA 公钥。':'已生成 RSA 公钥，请在币安注册；私钥已加密保存。';});
+$('copy-public').onclick=async()=>{try{await navigator.clipboard.writeText($('public-key').textContent);$('notice').textContent='公钥已复制。';}catch{$('notice').textContent='请选中并复制下方公钥。';}};
+$('preflight').onclick=()=>act('preflight',{password:$('password').value,market:$('market').value,symbol:$('symbol').value.trim().toUpperCase(),...($('key').value?{credentials:formCredentials()}:{})},value=>{$('margin-mode').value=value.configuration.marginMode;$('leverage').value=value.configuration.leverage;$('preflight-result').textContent=`币安当前：${value.configuration.marginMode} / ${value.configuration.leverage}×；总权益 ${num(value.equityUsdt)} USDT；发现 ${value.unmanagedPositions} 个非零仓位。读取不会改变账户。`;});
+$('catalog').onclick=()=>act('catalog',{market:$('market').value},value=>{$('symbols').replaceChildren(...value.symbols.map(row=>{const option=document.createElement('option');option.value=row.symbol;option.label=row.marginAsset;return option;}));$('notice').textContent=`已读取 ${value.symbols.length} 个可用永续合约，请在合约输入栏选择。`;});
+$('save').onclick=()=>act('save',{...savedForm(),passwordRepeat:$('password-repeat').value,credentials:formCredentials()},()=>{$('key').value='';$('secret').value='';$('pem').value='';privatePem='';showTab('workspace');});
+$('unlock').onclick=()=>act('unlock',{password:$('password').value},()=>showTab('workspace'));
+$('lock').onclick=()=>act('lock',{},()=>{$('password').value='';$('password-repeat').value='';privatePem='';$('pem').value='';$('public-key').hidden=true;});
+$('apply-settings').onclick=()=>act('settings',savedForm());
+$('contract-settings').onclick=()=>act('contract-settings',{confirmation:$('settings-confirmation').value},()=>{$('settings-confirmation').value='';});
+$('start').onclick=()=>{if(editing){$('notice').textContent='配置表有未保存修改，请先保存本机配置并只读核对。';return;}act('start',{confirmation:$('confirmation').value},()=>{$('confirmation').value='';});};
+$('stop').onclick=async()=>{try{render(await api('stop',{}));}catch(error){$('notice').textContent=message(error.message);}};
+$('close-position').onclick=()=>act('close-position',{confirmation:$('confirmation').value},()=>{$('confirmation').value='';});
+$('check').onclick=()=>act('check');$('reconcile').onclick=()=>act('reconcile');
+$('strategy-file').onchange=async()=>{const f=$('strategy-file').files[0];if(!f)return;if(f.size>16384){$('notice').textContent='合约策略 JSON 须小于 16KB。';return;}await act('strategy',{text:await f.text(),password:$('password').value});$('strategy-file').value='';};
+$('reset-strategy').onclick=()=>act('strategy',{text:'',password:$('password').value});
+async function download(path,name){try{const response=await fetch('/api/'+path,{headers:{'x-asbf-session':token}});if(!response.ok){const value=await response.json();throw new Error(value.error);}const url=URL.createObjectURL(await response.blob()),link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(error){$('notice').textContent=message(error.message);}}
+$('history').onclick=()=>download('history','AdaptiveFuturesBot-Orders.csv');$('review').onclick=()=>download('review','AdaptiveFuturesBot-Review.md');
+async function refresh(){if(busy)return;try{const state=await api('status');render(state);}catch{$('connection-state').textContent='本机服务未连接';$('start').disabled=true;$('close-position').disabled=true;}}
+refresh();setInterval(refresh,2000);
