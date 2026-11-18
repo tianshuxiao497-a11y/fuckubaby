@@ -38,11 +38,11 @@ export async function createFuturesServer({profile=defaultProfile(),port=0,now=D
   }
   const server=http.createServer(async(request,response)=>{
     const path=request.url,security={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"};
-    const reply=(code,value,headers={})=>{response.writeHead(code,{...security,'Content-Type':'application/json; charset=utf-8',...headers});response.end(typeof value==='string'?value:JSON.stringify(value));};
+    const reply=(code,value,headers={})=>{response.writeHead(code,{...security,'Content-Type':'application/json; charset=utf-8',...headers});response.end(typeof value==='string'||Buffer.isBuffer(value)?value:JSON.stringify(value));};
     if(request.headers.host!==new URL(origin).host)return reply(403,{error:'LOCAL_FUTURES_HOST_REQUIRED'});
     try{
-      const assets=new Map([['/','ui.html'],['/ui.js','ui.js'],['/ui.css','ui.css'],['/example-futures-strategy.json','example-futures-strategy.json']]);
-      if(request.method==='GET'&&assets.has(path)){const file=assets.get(path);return reply(200,await readFile(resolve(here,file),'utf8'),{'Content-Type':file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':file.endsWith('.json')?'application/json; charset=utf-8':'text/html; charset=utf-8'});}
+      const assets=new Map([['/','ui.html'],['/ui.js','ui.js'],['/ui.css','ui.css'],['/example-futures-strategy.json','example-futures-strategy.json'],['/fonts/AdaptiveNotoSansSC.woff2','fonts/AdaptiveNotoSansSC.woff2']]);
+      if(request.method==='GET'&&assets.has(path)){const file=assets.get(path);return reply(200,await readFile(resolve(here,file)),{'Content-Type':file.endsWith('.woff2')?'font/woff2':file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':file.endsWith('.json')?'application/json; charset=utf-8':'text/html; charset=utf-8'});}
       const provided=request.headers['x-asbf-session'];if(typeof provided!=='string'||provided.length!==token.length||!timingSafeEqual(Buffer.from(provided),Buffer.from(token)))return reply(403,{error:'LOCAL_FUTURES_SESSION_REQUIRED'});
       if(request.method==='GET'&&path==='/api/status')return reply(200,status());
       if(request.method==='GET'&&path==='/api/review'){if(!engine)throw new Error('UNLOCK_FUTURES_VAULT_FIRST');return reply(200,reviewReport(engine),{'Content-Type':'text/markdown; charset=utf-8','Content-Disposition':'attachment; filename="AdaptiveFuturesBot-Review.md"'});}

@@ -19,6 +19,10 @@ test('local session, Host and Origin protections reject unauthorised actions wit
 test('unconfigured renderer assets are local, script-isolated and do not expose session tokens',async t=>{
   const f=await fixture(t);for(const path of ['/','/ui.js','/ui.css','/example-futures-strategy.json']){const response=await f.get(path);assert.equal(response.status,200);const text=await response.text();assert.ok(!text.includes(f.url.hash.slice(1)));assert.equal(response.headers.get('x-frame-options'),'DENY');}
 });
+test('bundled Chinese glyphs are served as the original binary WOFF2, without external font requests',async t=>{
+  const f=await fixture(t),response=await f.get('/fonts/AdaptiveNotoSansSC.woff2');assert.equal(response.status,200);assert.equal(response.headers.get('content-type'),'font/woff2');
+  const data=Buffer.from(await response.arrayBuffer());assert.equal(data.subarray(0,4).toString(),'wOF2');assert.deepEqual(data,await readFile(new URL('./fonts/AdaptiveNotoSansSC.woff2',import.meta.url)));assert.equal(f.calls.length,0);
+});
 test('public contract catalog uses the selected family without an encrypted account or broker writes',async t=>{
   const f=await fixture(t);assert.equal((await f.post('catalog',{market:'COIN_M'})).status,200);assert.deepEqual(f.calls,[{market:'COIN_M',name:'catalog'}]);assert.equal((await f.post('catalog',{market:'OTHER'})).status,400);
 });

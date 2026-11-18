@@ -5,6 +5,9 @@ import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 const root=fileURLToPath(new URL('../',import.meta.url));
 export const FUTURES_DESKTOP_FILES=[
+  "products/futures-live-pilot/live/fonts/AdaptiveNotoSansSC.woff2",
+  "products/futures-live-pilot/live/fonts/OFL.txt",
+  "products/futures-live-pilot/live/fonts/DERIVATION.json",
   "products/futures-live-pilot/live/math.mjs",
   "products/futures-live-pilot/live/market.mjs",
   "products/futures-live-pilot/live/client.mjs",

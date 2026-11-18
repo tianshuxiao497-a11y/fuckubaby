@@ -13,7 +13,7 @@ arch = {'AMD64': 'x64', 'x86_64': 'x64', 'arm64': 'arm64', 'aarch64': 'arm64'}[p
 native = root / f'exports/futures-native-qa-{system}-{arch}'
 qa = json.loads((native / 'RESULT.json').read_text(encoding='utf-8'))
 assert qa['passed'] and qa['version'] == '0.1.0-futures-personal' and qa['unconfiguredStartBlocked']
-assert qa['realAccountReads'] == qa['exchangeOrders'] == 0
+assert qa['realAccountReads'] == qa['exchangeOrders'] == 0 and qa['uiFontLoaded']
 build = root / 'exports/futures-desktop-build-0.1.0'
 docs = root / 'products/futures-live-pilot/live'
 out = root / 'exports/AdaptiveFuturesBot-Desktop-0.1.0'
@@ -46,9 +46,11 @@ with ZipFile(destination, 'w', ZIP_DEFLATED) as z:
     for language in ['ZH', 'EN']:
         text = (docs / f'README-{language}.md').read_text(encoding='utf-8')
         z.writestr(f'Guides/START-HERE-{language}.md', text)
-        html = '<!doctype html><meta charset="utf-8"><title>Adaptive Futures Bot</title><style>body{max-width:900px;margin:40px auto;padding:20px;font:16px/1.7 system-ui}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style><pre>' + escape(text) + '</pre>'
+        html = '<!doctype html><meta charset="utf-8"><title>Adaptive Futures Bot</title><style>@font-face{font-family:AdaptiveNoto;src:url(fonts/AdaptiveNotoSansSC.woff2)}body{max-width:900px;margin:40px auto;padding:20px;font:16px/1.7 AdaptiveNoto,system-ui}pre{font-family:inherit;white-space:pre-wrap;overflow-wrap:anywhere}</style><pre>' + escape(text) + '</pre>'
         z.writestr(f'Guides/START-HERE-{language}.html', html)
     z.write(docs / 'example-futures-strategy.json', 'Guides/example-futures-strategy.json')
+    for name in ['AdaptiveNotoSansSC.woff2', 'OFL.txt', 'DERIVATION.json']:
+        z.write(docs / 'fonts' / name, 'Guides/fonts/' + name)
     z.writestr('NATIVE-ACCEPTANCE.json', json.dumps(qa, indent=2))
     z.writestr('SHA256SUMS.txt', '\n'.join(sums) + '\n')
 with ZipFile(destination) as z:

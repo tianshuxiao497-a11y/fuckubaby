@@ -28,6 +28,8 @@ app.whenReady().then(async()=>{
   if(selfTestRoot){
     await fs.mkdir(selfTestRoot,{recursive:true});
     try{
+      const uiFontLoaded=await window.webContents.executeJavaScript('(async()=>{await document.fonts.load(\'14px "Adaptive Noto Sans SC"\',"合约账户");await document.fonts.ready;return [...document.fonts].some(f=>f.family.includes("Adaptive Noto Sans SC")&&f.status==="loaded");})()');
+      if(!uiFontLoaded)throw new Error('FUTURES_BUNDLED_CHINESE_FONT_REQUIRED');
       const state=await window.webContents.executeJavaScript("({heading:document.querySelector('h2').textContent,startDisabled:document.getElementById('start').disabled,externalImport:!!document.getElementById('strategy-file'),reset:!!document.getElementById('reset-strategy'),chartEmpty:document.getElementById('chart-line').getAttribute('d')==='',nodeDisabled:typeof require==='undefined',mainnet:document.body.textContent.includes('BINANCE FUTURES MAINNET'),contractSelector:!!document.getElementById('market'),manualMarketClose:!!document.getElementById('close-position')})");
       if(!state.startDisabled||!state.externalImport||!state.reset||!state.chartEmpty||!state.nodeDisabled||!state.mainnet)throw new Error('FUTURES_RENDERER_INITIAL_STATE_FAILED');
       await window.webContents.executeJavaScript("document.querySelector('[data-tab=setup]').click()");
@@ -39,7 +41,7 @@ app.whenReady().then(async()=>{
       await window.webContents.executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
       await fs.writeFile(path.join(selfTestRoot,'DESKTOP-PREVIEW.png'),(await window.webContents.capturePage()).toPNG());
       await fs.writeFile(path.join(selfTestRoot,'RESULT.json'),JSON.stringify({passed:true,version:'0.1.0-futures-personal',platform:process.platform,arch:process.arch,electron:process.versions.electron,
-        renderer:state,setup,unconfiguredStartBlocked:true,realAccountReads:0,exchangeOrders:0,customerSubscriptionIntegrated:false},null,2));
+        renderer:state,setup,uiFontLoaded,unconfiguredStartBlocked:true,realAccountReads:0,exchangeOrders:0,customerSubscriptionIntegrated:false},null,2));
       await shutdown();
     }catch(error){await fs.writeFile(path.join(selfTestRoot,'FAILED.txt'),safeError(error));await runtime.close();window.destroy();app.exit(1);}
     return;
