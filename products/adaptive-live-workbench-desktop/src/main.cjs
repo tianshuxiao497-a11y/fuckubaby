@@ -2,11 +2,21 @@ const {app,BrowserWindow,dialog,session,powerMonitor}=require('electron');
 const path=require('node:path'),fs=require('node:fs/promises'),{pathToFileURL}=require('node:url');
 let window,runtime,closing=false;
 const selfTestArg=process.argv.find(arg=>arg.startsWith('--self-test=')),selfTestRoot=selfTestArg?path.resolve(selfTestArg.slice(12)):null;
+// Disposable Linux display servers have no physical GPU. Keep the same renderer
+// isolation while producing native screenshots with the software compositor.
+if(selfTestRoot&&process.platform==='linux')app.disableHardwareAcceleration();
 if(!app.requestSingleInstanceLock())app.quit();
 app.on('second-instance',()=>{window?.show();window?.focus();});
 const safeError=error=>/^[A-Z0-9_]+$/.test(error?.message??'')?error.message:'LIVE_WORKBENCH_START_FAILED';
 async function shutdown(){closing=true;runtime?.stop();await runtime?.close();window?.destroy();app.quit();}
 const wait=ms=>new Promise(ok=>setTimeout(ok,ms));
+async function screenshot(name){
+  for(let attempt=0;attempt<5;attempt++){
+    window.show();window.focus();await wait(300);
+    try{const shot=await window.webContents.capturePage();if(shot.isEmpty())throw new Error('NATIVE_SCREENSHOT_EMPTY');await fs.writeFile(path.join(selfTestRoot,name),shot.toPNG());return;}
+    catch(error){if(attempt===4||error.message!=='UnknownVizError')throw error;}
+  }
+}
 app.whenReady().then(async()=>{
   const root=app.isPackaged?path.join(process.resourcesPath,'app-runtime'):path.resolve(__dirname,'../stage/app-runtime'),{createWorkbenchServer}=await import(pathToFileURL(path.join(root,'products/live-workbench/server.mjs')).href);
   let exchangeRequests=0;const fakeFactory=()=>{exchangeRequests++;throw new Error('NO_EXCHANGE_ACCESS_IN_NATIVE_SELF_TEST');};
@@ -31,15 +41,15 @@ app.whenReady().then(async()=>{
       const renderer={};for(const [key,frame] of Object.entries(frames)){renderer[key]=await frame.executeJavaScript('({startDisabled:document.getElementById("start").disabled,nodeDisabled:typeof require==="undefined",externalImport:!!document.getElementById("strategy-file")})');if(!renderer[key].startDisabled||!renderer[key].nodeDisabled||!renderer[key].externalImport)throw new Error('WORKSPACE_INITIAL_SAFETY_STATE_FAILED');}
       for(const [key,phrase,header] of [['spot','START REAL SPOT TRADING','x-asbl-session'],['futures','START REAL FUTURES TRADING','x-asbf-session']]){const url=new URL(pages[key]),r=await fetch(url.origin+'/api/start',{method:'POST',headers:{[header]:url.hash.slice(1),Origin:url.origin,'Content-Type':'application/json'},body:JSON.stringify({confirmation:phrase})});if(r.status!==400)throw new Error('UNCONFIGURED_START_NOT_BLOCKED');}
       if(exchangeRequests)throw new Error('UNEXPECTED_REAL_ACCOUNT_CALL');
-      await window.webContents.executeJavaScript('document.getElementById("spot-tab").click()');await wait(100);await fs.writeFile(path.join(selfTestRoot,'SPOT-PREVIEW.png'),(await window.webContents.capturePage()).toPNG());
+      await window.webContents.executeJavaScript('document.getElementById("spot-tab").click()');await screenshot('SPOT-PREVIEW.png');
       await window.webContents.executeJavaScript('document.getElementById("futures-tab").click()');
       const future=frames.futures;await future.executeJavaScript('for(let id=1;id<256;id++)clearInterval(id)');
       const synthetic=require('./selftest-state.cjs')();await future.executeJavaScript('render('+JSON.stringify(synthetic)+');document.getElementById("confirmation").value="START REAL FUTURES TRADING";document.getElementById("confirmation").dispatchEvent(new Event("input"));');
       const legs=await future.executeJavaScript('({long:document.getElementById("long-position").textContent,short:document.getElementById("short-position").textContent,closeLong:!document.getElementById("close-long").disabled,closeShort:!document.getElementById("close-short").disabled})');if(!legs.closeLong||!legs.closeShort||!legs.long.includes('0.01')||!legs.short.includes('0.01'))throw new Error('INDEPENDENT_LEG_UI_FAILED');
-      await future.executeJavaScript('document.getElementById("long-position").closest("article.panel").scrollIntoView()');await wait(100);await fs.writeFile(path.join(selfTestRoot,'FUTURES-LEGS-OFFLINE.png'),(await window.webContents.capturePage()).toPNG());
+      await future.executeJavaScript('document.getElementById("long-position").closest("article.panel").scrollIntoView()');await screenshot('FUTURES-LEGS-OFFLINE.png');
       await future.executeJavaScript('document.querySelector("[data-tab=setup]").click();document.getElementById("margin-amount").value="5";document.getElementById("margin-confirmation").value="ADD ISOLATED MARGIN";document.getElementById("margin-confirmation").dispatchEvent(new Event("input"));document.getElementById("exchange-auto-margin").scrollIntoView()');
       const margin=await future.executeJavaScript('({manualEnabled:!document.getElementById("add-margin").disabled,autoDisabled:document.getElementById("auto-margin-start").disabled,exchangeState:document.getElementById("exchange-auto-margin").textContent,policyImport:!!document.getElementById("margin-policy-file")})');if(!margin.manualEnabled||!margin.autoDisabled||!margin.policyImport||!margin.exchangeState.includes('已关闭'))throw new Error('MARGIN_CONTROL_UI_FAILED');
-      await wait(100);await fs.writeFile(path.join(selfTestRoot,'FUTURES-MARGIN-OFFLINE.png'),(await window.webContents.capturePage()).toPNG());
+      await screenshot('FUTURES-MARGIN-OFFLINE.png');
       const template=await (await fetch(new URL('/example-auto-margin.json',pages.futures))).json();if(template.enabled||template.perAdditionAmount!=='0'||template.maxTotalAmount!=='0')throw new Error('NO_DEFAULT_AUTO_MARGIN_SPENDING_ALLOWED');
       if(runtime.status().spot.running||runtime.status().futures.running||runtime.status().futures.autoMarginArmed||exchangeRequests)throw new Error('NATIVE_SELF_TEST_STARTED_TRADING');
       await fs.writeFile(path.join(selfTestRoot,'RESULT.json'),JSON.stringify({passed:true,version:'0.3.0-personal',platform:process.platform,arch:process.arch,electron:process.versions.electron,uiFontLoaded:true,twoWorkspaces:true,renderer,legs,margin,syntheticInterfaceOnly:true,unconfiguredStartBlocked:true,realAccountReads:0,exchangeOrders:0,customerSubscriptionIntegrated:false},null,2));await shutdown();
