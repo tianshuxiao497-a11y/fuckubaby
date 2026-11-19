@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac,generateKeyPairSync,verify} from 'node:crypto';
-import {FuturesClient,FUTURES_CONFIRMATION,SETTINGS_CONFIRMATION} from './client.mjs';
+import {FuturesClient,FUTURES_CONFIRMATION,SETTINGS_CONFIRMATION,MODE_CONFIRMATION,MARGIN_CONFIRMATION} from './client.mjs';
 const time=1800000000000,id='asbf_'+'a'.repeat(28),algo='asbp_'+'b'.repeat(28);
 function fixture({market='USD_M',rsa=false,reply}={}){
   const calls=[],pair=rsa?generateKeyPairSync('rsa',{modulusLength:2048}):null;
@@ -32,11 +32,21 @@ test('no write can occur on save, clock sync, read-only check or without the exa
   await assert.rejects(f.client.request('setLeverage',{symbol:'BTCUSDT',leverage:10}),/EXPLICIT/);
   assert.equal(f.calls.filter(c=>c.options.method!=='GET').length,0);
 });
-test('only explicitly confirmed per-symbol margin and leverage writes exist; global mode, transfers and withdrawals do not',async()=>{
+test('margin/leverage approval does not also grant account-wide mode, transfers or withdrawals',async()=>{
   const f=fixture();await f.client.syncTime();f.client.armSettings(SETTINGS_CONFIRMATION);
   await f.client.request('setLeverage',{symbol:'BTCUSDT',leverage:10});await f.client.request('setMargin',{symbol:'BTCUSDT',marginType:'ISOLATED'});
-  for(const name of ['setPositionMode','setMultiAssets','withdraw','transfer','batchOrders'])await assert.rejects(f.client.request(name,{}),/REFUSED/);
+  await assert.rejects(f.client.request('setPositionMode',{dualSidePosition:'true'}),/EXPLICIT_ACCOUNT/);
+  for(const name of ['setMultiAssets','withdraw','transfer','batchOrders'])await assert.rejects(f.client.request(name,{}),/REFUSED/);
   assert.equal(f.calls.filter(c=>c.options.method==='POST').length,2);
+});
+test('account Hedge Mode needs a distinct approval and cannot be silently disabled',async()=>{
+  const f=fixture();await f.client.syncTime();f.client.arm(FUTURES_CONFIRMATION);await assert.rejects(f.client.request('setPositionMode',{dualSidePosition:'true'}),/EXPLICIT_ACCOUNT/);
+  f.client.armMode(MODE_CONFIRMATION);await f.client.request('setPositionMode',{dualSidePosition:'true'});assert.equal(f.calls.at(-1).url.pathname,'/fapi/v1/positionSide/dual');await assert.rejects(f.client.request('setPositionMode',{dualSidePosition:'false'}));
+});
+test('isolated additions need their own approval, explicit direction and positive amount; reductions are refused',async()=>{
+  const f=fixture({market:'COIN_M'});await f.client.syncTime();const args={symbol:'BTCUSD_PERP',positionSide:'SHORT',amount:'0.001',type:1};
+  await assert.rejects(f.client.request('addMargin',args),/EXPLICIT_ISOLATED/);f.client.armMargin(MARGIN_CONFIRMATION);await f.client.request('addMargin',args);assert.equal(f.calls.at(-1).url.pathname,'/dapi/v1/positionMargin');
+  await assert.rejects(f.client.request('addMargin',{...args,type:2}));await assert.rejects(f.client.request('addMargin',{...args,amount:'0'}));f.client.disarmMargin();await assert.rejects(f.client.request('addMargin',args));
 });
 test('market orders only reduce and hedge mode cannot accidentally send reduceOnly',async()=>{
   const f=fixture();await f.client.syncTime();f.client.arm(FUTURES_CONFIRMATION);

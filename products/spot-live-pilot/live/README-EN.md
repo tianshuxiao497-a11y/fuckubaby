@@ -1,4 +1,4 @@
-# Adaptive Spot Bot — Live Personal Desktop 0.2.0
+# Adaptive Spot Bot — Live Personal Desktop 0.3.0
 
 This is the seller's self-run Binance Spot mainnet edition. It has actual order execution code and uses real funds only after the owner configures an account and explicitly starts trading. The customer subscription edition remains a separate release.
 

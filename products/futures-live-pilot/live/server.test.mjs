@@ -47,3 +47,11 @@ test('invalid external strategy and wrong password preserve saved settings; loca
 test('read-only connection failure stops strategy and preserves encrypted configuration for retry',async t=>{
   const f=await fixture(t);await f.post('save',{credentials:{apiKey:'fake',apiSecret:'fake-secret'},password,passwordRepeat:password,settings,preferences:{autoConnect:true}});await f.app.monitor();assert.equal(f.app.status().running,false);assert.equal(f.app.status().reconnecting,true);assert.equal((await loadVault(join(f.profile,'futures-vault.json'),password)).credentials.apiKey,'fake');
 });
+test('external margin import requires the vault password and never arms itself or grants exchange writes',async t=>{
+  const f=await fixture(t),text=await readFile(new URL('./example-auto-margin.json',import.meta.url),'utf8');
+  await f.post('save',{credentials:{apiKey:'fake',apiSecret:'fake-secret'},password,passwordRepeat:password,settings,preferences:{autoConnect:false}});
+  const before=await readFile(join(f.profile,'futures-vault.json'),'utf8');assert.equal((await f.post('margin-policy',{password:'wrong-password-long',text})).status,400);assert.equal(await readFile(join(f.profile,'futures-vault.json'),'utf8'),before);
+  const saved=await f.post('margin-policy',{password,text});assert.equal(saved.status,200);assert.equal(saved.value.autoMarginArmed,false);assert.equal((await loadVault(join(f.profile,'futures-vault.json'),password)).settings.externalMarginPolicy.enabled,false);
+  for(const route of ['hedge-mode','hedge-lock','add-margin','auto-margin-start'])assert.equal((await f.post(route,{}, {Origin:'https://attacker.invalid'})).status,403);
+  assert.equal(f.calls.length,0);
+});

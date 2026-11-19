@@ -33,7 +33,8 @@ function safeError(error) {
   return /^[A-Z0-9_]+$/.test(error?.message ?? '') ? error.message : 'ACTION_FAILED_CHECK_LOCAL_CONFIGURATION';
 }
 
-export async function createLiveServer({ profile = defaultProfile(), port = 3012, clientFactory = credentials => new MainnetSpotClient(credentials), now = Date.now, pollMs = 5000 } = {}) {
+export async function createLiveServer({ profile = defaultProfile(), port = 3012, clientFactory = credentials => new MainnetSpotClient(credentials), now = Date.now, pollMs = 5000, embeddingOrigin = null } = {}) {
+  if(embeddingOrigin!==null){let url;try{url=new URL(embeddingOrigin);}catch{throw new Error('INVALID_WORKBENCH_ORIGIN');}if(url.protocol!=='http:'||url.hostname!=='127.0.0.1'||!url.port||url.origin!==embeddingOrigin)throw new Error('INVALID_WORKBENCH_ORIGIN');}
   if (!Number.isSafeInteger(pollMs) || pollMs < 20) throw new Error('INVALID_MONITOR_INTERVAL');
   const token = randomBytes(32).toString('hex');
   const vaultPath = resolve(profile, 'mainnet-vault.json');
@@ -93,13 +94,14 @@ export async function createLiveServer({ profile = defaultProfile(), port = 3012
   const server = http.createServer(async (request, response) => {
     const host = request.headers.host;
     const path = request.url;
-    const security = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" };
+    const security = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', ...(embeddingOrigin?{}:{'X-Frame-Options':'DENY'}), 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors "+(embeddingOrigin??"'none'")+"; base-uri 'none'; form-action 'self'" };
     const reply = (code, value, extra = {}) => {
       response.writeHead(code, { ...security, 'Content-Type': 'application/json; charset=utf-8', ...extra });
-      response.end(typeof value === 'string' ? value : JSON.stringify(value));
+      response.end(typeof value === 'string' || Buffer.isBuffer(value) ? value : JSON.stringify(value));
     };
     if (host !== new URL(origin).host) return reply(403, { error: 'LOCAL_HOST_REQUIRED' });
     try {
+      if(request.method==='GET'&&path==='/fonts/AdaptiveNotoSansSC.woff2')return reply(200,await readFile(resolve(here,'../../futures-live-pilot/live/fonts/AdaptiveNotoSansSC.woff2')),{'Content-Type':'font/woff2'});
       const assets = new Map([['/', 'ui.html'], ['/ui.js', 'ui.js'], ['/ui.css', 'ui.css'], ['/example-live-strategy.json', 'example-live-strategy.json']]);
       if (request.method === 'GET' && assets.has(path)) {
         const file = assets.get(path);

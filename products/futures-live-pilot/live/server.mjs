@@ -9,7 +9,8 @@ import {FuturesEngine,FUTURES_VERSION,validateSettings} from './engine.mjs';
 import {saveVault,loadVault} from '../../spot-live-pilot/live/vault.mjs';
 import {parseFuturesStrategy} from './strategy.mjs';
 import {contractRules,leverageTiers} from './market.mjs';
-import {aggregateAssets} from './ledger.mjs';
+import {aggregateAssets,ownedPositions} from './ledger.mjs';
+import {parseMarginPolicy,registerMarginPolicy} from './margin-policy.mjs';
 import {totalEquityUsdt,signedUnits,decimal} from './math.mjs';
 import {reviewReport} from './review.mjs';
 const here=fileURLToPath(new URL('.',import.meta.url));
@@ -18,30 +19,31 @@ const safeError=error=>/^[A-Z0-9_]+$/.test(error?.message??'')?error.message:'FU
 function credentials(value){if(!value||Object.keys(value).some(k=>!['apiKey','apiSecret','privateKeyPem'].includes(k))||typeof value.apiKey!=='string'||!value.apiKey.trim()||(!!value.apiSecret===!!value.privateKeyPem))throw new Error('ONE_FUTURES_SIGNATURE_METHOD_REQUIRED');return value;}
 function preferences(value){if(value===undefined)return {autoConnect:false};if(!value||Object.keys(value).join(',')!=='autoConnect'||typeof value.autoConnect!=='boolean')throw new Error('INVALID_FUTURES_CONNECTION_PREFERENCE');return value;}
 async function bodyOf(request){let size=0;const parts=[];for await(const part of request){size+=part.length;if(size>32768)throw new Error('FUTURES_REQUEST_TOO_LARGE');parts.push(part);}try{return JSON.parse(Buffer.concat(parts).toString('utf8'));}catch{throw new Error('INVALID_FUTURES_REQUEST_JSON');}}
-export async function createFuturesServer({profile=defaultProfile(),port=0,now=Date.now,pollMs=5000,clientFactory=value=>Object.fromEntries(['USD_M','COIN_M'].map(market=>[market,new FuturesClient({market,...value})]))}={}){
+export async function createFuturesServer({profile=defaultProfile(),port=0,now=Date.now,pollMs=5000,embeddingOrigin=null,clientFactory=value=>Object.fromEntries(['USD_M','COIN_M'].map(market=>[market,new FuturesClient({market,...value})]))}={}){
+  if(embeddingOrigin!==null){let url;try{url=new URL(embeddingOrigin);}catch{throw new Error('INVALID_WORKBENCH_ORIGIN');}if(url.protocol!=='http:'||url.hostname!=='127.0.0.1'||!url.port||url.origin!==embeddingOrigin)throw new Error('INVALID_WORKBENCH_ORIGIN');}
   if(!Number.isSafeInteger(pollMs)||pollMs<20)throw new Error('INVALID_FUTURES_MONITOR_INTERVAL');
   const token=randomBytes(32).toString('hex'),vaultPath=resolve(profile,'futures-vault.json');let origin,engine=null,secret=null,settings=null,prefs={autoConnect:false},closing=false,actionBusy=false,nextCheck=Infinity,failures=0;
   let vaultExists=await lstat(vaultPath).then(()=>true,e=>{if(e.code==='ENOENT')return false;throw e;});
   const logs=[];const record=(event,code=null)=>{logs.push({time:now(),event,code});if(logs.length>200)logs.shift();};
-  const status=()=>({version:FUTURES_VERSION,environment:'BINANCE_FUTURES_MAINNET',edition:'personal',running:engine?.running??false,unlocked:!!engine,vaultExists,settings,preferences:prefs,
+  const status=()=>({version:FUTURES_VERSION,environment:'BINANCE_FUTURES_MAINNET',edition:'personal',running:engine?.running??false,autoMarginArmed:engine?.autoMarginArmed??false,unlocked:!!engine,vaultExists,settings,preferences:prefs,
     connected:!!engine?.last?.accountChecked&&!engine.error&&now()>=engine.last.localCheckedAt&&now()-engine.last.localCheckedAt<30000,snapshot:engine?.last??null,pending:!!engine?.state?.pending,error:engine?.error??null,reconnecting:!!engine&&prefs.autoConnect&&failures>0,logs:logs.slice(-100)});
   async function replace(data){
-    if(engine?.running||engine?.busy||engine?.state?.pending||engine?.state?.position)throw new Error('FLAT_STOPPED_RECONCILED_FUTURES_PROFILE_REQUIRED');
+    if(engine?.running||engine?.autoMarginArmed||engine?.busy||engine?.state?.pending||ownedPositions(engine?.state).length)throw new Error('FLAT_STOPPED_RECONCILED_FUTURES_PROFILE_REQUIRED');
     const config=validateSettings(data.settings),savedPrefs=preferences(data.preferences),savedCredentials=credentials(data.credentials),clients=clientFactory(savedCredentials);
     await engine?.close();engine=null;secret=null;settings=null;nextCheck=Infinity;
     const candidate=new FuturesEngine({profile,clients,settings:config,now,guard:()=>!closing});await candidate.acquire();engine=candidate;secret=savedCredentials;settings=config;prefs=savedPrefs;failures=0;
   }
   async function monitor(){
-    if(closing||!engine||(!engine.running&&!prefs.autoConnect)||actionBusy||engine.busy||now()<nextCheck)return;
-    try{await engine.check({execute:engine.running});if(failures)record('FUTURES_READ_ONLY_CONNECTION_RESTORED');failures=0;nextCheck=now()+(engine.running?5000:15000);}
+    if(closing||!engine||(!engine.running&&!engine.autoMarginArmed&&!prefs.autoConnect)||actionBusy||engine.busy||now()<nextCheck)return;
+    try{await engine.check({execute:engine.running||engine.autoMarginArmed});if(failures)record('FUTURES_READ_ONLY_CONNECTION_RESTORED');failures=0;nextCheck=now()+((engine.running||engine.autoMarginArmed)?5000:15000);}
     catch(error){failures++;nextCheck=now()+Math.min(60000,5000*2**Math.min(failures-1,4));record('FUTURES_READ_ONLY_RECONNECT_WAIT',safeError(error));}
   }
   const server=http.createServer(async(request,response)=>{
-    const path=request.url,security={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"};
+    const path=request.url,security={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer',...(embeddingOrigin?{}:{'X-Frame-Options':'DENY'}),'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors "+(embeddingOrigin??"'none'")+"; base-uri 'none'; form-action 'self'"};
     const reply=(code,value,headers={})=>{response.writeHead(code,{...security,'Content-Type':'application/json; charset=utf-8',...headers});response.end(typeof value==='string'||Buffer.isBuffer(value)?value:JSON.stringify(value));};
     if(request.headers.host!==new URL(origin).host)return reply(403,{error:'LOCAL_FUTURES_HOST_REQUIRED'});
     try{
-      const assets=new Map([['/','ui.html'],['/ui.js','ui.js'],['/ui.css','ui.css'],['/example-futures-strategy.json','example-futures-strategy.json'],['/fonts/AdaptiveNotoSansSC.woff2','fonts/AdaptiveNotoSansSC.woff2']]);
+      const assets=new Map([['/','ui.html'],['/ui.js','ui.js'],['/ui.css','ui.css'],['/example-futures-strategy.json','example-futures-strategy.json'],['/example-auto-margin.json','example-auto-margin.json'],['/fonts/AdaptiveNotoSansSC.woff2','fonts/AdaptiveNotoSansSC.woff2']]);
       if(request.method==='GET'&&assets.has(path)){const file=assets.get(path);return reply(200,await readFile(resolve(here,file)),{'Content-Type':file.endsWith('.woff2')?'font/woff2':file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':file.endsWith('.json')?'application/json; charset=utf-8':'text/html; charset=utf-8'});}
       const provided=request.headers['x-asbf-session'];if(typeof provided!=='string'||provided.length!==token.length||!timingSafeEqual(Buffer.from(provided),Buffer.from(token)))return reply(403,{error:'LOCAL_FUTURES_SESSION_REQUIRED'});
       if(request.method==='GET'&&path==='/api/status')return reply(200,status());
@@ -53,10 +55,11 @@ export async function createFuturesServer({profile=defaultProfile(),port=0,now=D
       if(request.method!=='POST'||request.headers.origin!==origin||request.headers['content-type']!=='application/json')return reply(403,{error:'LOCAL_FUTURES_ORIGIN_REQUIRED'});
       const body=await bodyOf(request);
       if(path==='/api/stop'){engine?.stop();record('FUTURES_MANUAL_STOP');return reply(200,status());}
+      if(path==='/api/auto-margin-stop'){engine?.stopAutoMargin();record('JSON_AUTO_MARGIN_STOPPED');return reply(200,status());}
       if(actionBusy||engine?.busy)throw new Error('FUTURES_ACTION_IN_PROGRESS');actionBusy=true;
       try{
         if(path==='/api/preflight'){
-          if(engine?.running||engine?.state?.pending||engine?.state?.position)throw new Error('FLAT_STOPPED_RECONCILED_FUTURES_PROFILE_REQUIRED');
+          if(engine?.running||engine?.autoMarginArmed||engine?.state?.pending||ownedPositions(engine?.state).length)throw new Error('FLAT_STOPPED_RECONCILED_FUTURES_PROFILE_REQUIRED');
           const creds=body.credentials?credentials(body.credentials):(await loadVault(vaultPath,body.password)).credentials;
           const probe=new FuturesEngine({profile:resolve(profile,'readonly-probe'),clients:clientFactory(creds),settings:validateSettings({market:body.market,symbol:body.symbol,marginMode:'ISOLATED',leverage:1,marginPercent:1,directionMode:'both',dailyLossPercent:20,externalStrategy:null}),now});
           const env=await probe.environment(),catalog=await probe.client.request('catalog'),rules=contractRules(catalog,body.market,body.symbol),config=await probe.configuration(env,rules),tiers=leverageTiers(await probe.client.request('brackets',{symbol:body.symbol}),body.market,body.symbol);
@@ -74,7 +77,7 @@ export async function createFuturesServer({profile=defaultProfile(),port=0,now=D
           try{await saveVault(vaultPath,data,body.password);}catch(e){prefs.autoConnect=false;throw e;}vaultExists=true;nextCheck=prefs.autoConnect?now():Infinity;record('FUTURES_CONFIGURATION_SAVED');
         }else if(path==='/api/unlock'){await replace(await loadVault(vaultPath,body.password));nextCheck=prefs.autoConnect?now():Infinity;record('FUTURES_VAULT_UNLOCKED');}
         else if(path==='/api/lock'){
-          if(engine?.running||engine?.state?.pending||engine?.state?.position)throw new Error('FLAT_STOPPED_RECONCILED_FUTURES_PROFILE_REQUIRED');await engine?.close();engine=null;secret=null;settings=null;nextCheck=Infinity;record('FUTURES_VAULT_LOCKED');
+          if(engine?.running||engine?.autoMarginArmed||engine?.state?.pending||ownedPositions(engine?.state).length)throw new Error('FLAT_STOPPED_RECONCILED_FUTURES_PROFILE_REQUIRED');await engine?.close();engine=null;secret=null;settings=null;nextCheck=Infinity;record('FUTURES_VAULT_LOCKED');
         }else if(path==='/api/generate-key'){
           if(engine?.running||engine?.state?.pending)throw new Error('STOP_BEFORE_FUTURES_KEY_GENERATION');if(vaultExists&&!engine)throw new Error('UNLOCK_FUTURES_VAULT_FIRST');
           if(secret?.privateKeyPem)return reply(200,{publicKey:createPublicKey(createPrivateKey(secret.privateKeyPem)).export({type:'spki',format:'pem'}),privateKeyPem:secret.privateKeyPem,reused:true});
@@ -87,12 +90,22 @@ export async function createFuturesServer({profile=defaultProfile(),port=0,now=D
           if(path==='/api/check'){await engine.check();failures=0;nextCheck=now()+15000;record('FUTURES_READ_ONLY_ACCOUNT_CHECKED');}
           else if(path==='/api/start'){await engine.start(body.confirmation);nextCheck=now();record('FUTURES_STRATEGY_STARTED_BY_USER');}
           else if(path==='/api/reconcile'){engine.stop();await engine.check();record('FUTURES_ORIGINAL_ORDER_RECONCILED');}
-          else if(path==='/api/close-position'){await engine.closeOwnedPosition(body.confirmation);record('FUTURES_OWN_POSITION_CLOSED_BY_USER');}
+          else if(path==='/api/close-position'){await engine.closeOwnedPosition(body.confirmation,body.direction);record('FUTURES_OWN_POSITION_CLOSED_BY_USER');}
           else if(path==='/api/contract-settings'){await engine.applyContractSettings(body.confirmation);record('FUTURES_SELECTED_CONTRACT_SETTINGS_APPLIED');}
+          else if(path==='/api/hedge-mode'){await engine.enableHedgeMode(body.confirmation);record('FUTURES_ACCOUNT_HEDGE_MODE_VERIFIED');}
+          else if(path==='/api/hedge-preview')return reply(200,await engine.previewManualHedge());
+          else if(path==='/api/hedge-lock'){await engine.manualHedge(body.confirmation,body.expectedPositions);record('FUTURES_MANUAL_HEDGE_LOCK_REVIEWED');}
+          else if(path==='/api/hedge-unlock'){await engine.clearManualHedgeLock(body.confirmation);record('FUTURES_MANUAL_HEDGE_LOCK_RELEASED');}
+          else if(path==='/api/add-margin'){await engine.addIsolatedMargin({confirmation:body.confirmation,direction:body.direction,amount:body.amount});record('FUTURES_MANUAL_MARGIN_ADDITION_VERIFIED');}
+          else if(path==='/api/auto-margin-start'){await engine.armAutoMargin(body.confirmation);nextCheck=now();record('JSON_AUTO_MARGIN_ARMED_BY_USER');}
+          else if(path==='/api/margin-policy'){
+            if(engine.running||engine.autoMarginArmed||engine.state?.pending)throw new Error('STOP_AND_RECONCILE_BEFORE_AUTO_MARGIN');const policy=body.text?parseMarginPolicy(body.text):null,updated=validateSettings({...settings,externalMarginPolicy:policy});await loadVault(vaultPath,body.password);
+            if(policy&&engine.state)await engine.commit(registerMarginPolicy(engine.state,policy));await saveVault(vaultPath,{credentials:secret,settings:updated,preferences:prefs},body.password);engine.settings=settings=updated;record(policy?'JSON_AUTO_MARGIN_POLICY_IMPORTED':'JSON_AUTO_MARGIN_POLICY_REMOVED');
+          }
           else if(path==='/api/settings'){
             const saved=await loadVault(vaultPath,body.password),data={credentials:saved.credentials,settings:validateSettings(body.settings),preferences:preferences(body.preferences)};await replace(data);try{await saveVault(vaultPath,data,body.password);}catch(e){prefs.autoConnect=false;throw e;}nextCheck=prefs.autoConnect?now():Infinity;record('FUTURES_LOCAL_SETTINGS_UPDATED');
           }else if(path==='/api/strategy'){
-            if(engine.running||engine.state?.pending||engine.state?.position)throw new Error('FLAT_STOPPED_RECONCILED_FUTURES_PROFILE_REQUIRED');
+            if(engine.running||engine.autoMarginArmed||engine.state?.pending||ownedPositions(engine.state).length)throw new Error('FLAT_STOPPED_RECONCILED_FUTURES_PROFILE_REQUIRED');
             const external=body.text?parseFuturesStrategy(body.text):null,updated=validateSettings({...settings,externalStrategy:external});await loadVault(vaultPath,body.password);await saveVault(vaultPath,{credentials:secret,settings:updated,preferences:prefs},body.password);engine.settings=settings=updated;record(external?'FUTURES_EXTERNAL_STRATEGY_IMPORTED':'FUTURES_BUILT_IN_STRATEGY_RESTORED');
           }else throw new Error('UNKNOWN_FUTURES_ACTION');
         }

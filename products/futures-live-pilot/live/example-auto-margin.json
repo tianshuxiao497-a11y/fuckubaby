@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "format": "AdaptiveAutoMargin",
+  "id": "my-margin-budget-001",
+  "enabled": false,
+  "market": "USD_M",
+  "symbol": "BTCUSDT",
+  "asset": "USDT",
+  "positionSides": ["LONG", "SHORT"],
+  "trigger": { "liquidationDistancePercentAtMost": 0 },
+  "perAdditionAmount": "0",
+  "maxTotalAmount": "0",
+  "maxAdditions": 0,
+  "cooldownSeconds": 0
+}

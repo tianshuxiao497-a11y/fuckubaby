@@ -1,0 +1,5 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Adaptive Trading Bot · Live</title><link rel="stylesheet" href="/ui.css"><script src="/ui.js" defer></script></head><body>
+<header><div><b>Adaptive Trading Bot</b><small>LIVE 0.3.0 · 真实资金 · 自用验收</small></div><nav aria-label="交易市场"><button id="spot-tab" class="active">现货 / Spot <span id="spot-state">未启动</span></button><button id="futures-tab">合约 / Futures <span id="futures-state">未启动</span></button></nav><button id="stop-all">停止全部自动策略</button></header>
+<p id="notice">现货与合约使用独立配置及账本。切换页面不会启动交易；运行中的策略会继续，请查看顶部状态。</p>
+<iframe id="spot-frame" title="现货实盘工作台" allow="clipboard-write"></iframe><iframe id="futures-frame" title="合约实盘工作台" allow="clipboard-write" hidden></iframe>
+</body></html>

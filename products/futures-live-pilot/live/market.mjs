@@ -41,8 +41,16 @@ export function checkLeverage({market,quantity,price,contractSize='1',leverage,t
   if(!allowed.length||!Number.isSafeInteger(leverage)||leverage<1||leverage>Math.max(...allowed))throw new Error('SELECTED_LEVERAGE_EXCEEDS_ACCOUNT_BRACKET');
   return Math.max(...allowed);
 }
-export function checkIsolatedStop({leverage,stopLossPercent,feeRate,tiers}){
-  const rates=tiers.filter(t=>t.leverage>=leverage).map(t=>Number(t.maintenanceRate));
+export function checkIsolatedStop({market,quantity,price,contractSize='1',leverage,stopLossPercent,feeRate,tiers}){
+  let relevant=tiers.filter(t=>t.leverage>=leverage);
+  if(market&&quantity&&price){
+    family(market);const q=units(quantity),p=units(price),fraction=units(String(stopLossPercent))/100n;
+    const exposure=market==='USD_M'?multiply(q,p):divide(multiply(q,units(contractSize)),p);
+    const worst=market==='USD_M'?multiply(exposure,units('1')+fraction):divide(multiply(q,units(contractSize)),multiply(p,units('1')-fraction));
+    const first=tiers.findIndex(t=>exposure<units(t.cap)),last=tiers.findIndex(t=>worst<units(t.cap));
+    if(first<0||last<0||tiers[last].leverage<leverage)throw new Error('ISOLATED_STOP_CROSSES_LEVERAGE_BRACKET');relevant=tiers.slice(first,last+1);
+  }
+  const rates=relevant.map(t=>Number(t.maintenanceRate));
   if(!rates.length||rates.some(r=>!Number.isFinite(r)))throw new Error('VERIFIED_MAINTENANCE_RATE_REQUIRED');
   // Conservative feasibility check, not a liquidation-price prediction. The
   // exchange's actual position liquidation price is checked again after entry.

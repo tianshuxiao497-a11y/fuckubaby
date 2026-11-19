@@ -1,58 +1,74 @@
-# Adaptive Futures Bot · Personal Mainnet 0.1.0
+# Adaptive Trading Bot Live · Personal Workbench 0.3.0
 
-This is the owner's self-acceptance edition with real Binance Futures trading endpoints. It is separate from the Testnet customer product and the Spot personal app. Customer subscription licensing is not integrated. Do not replace the existing Whop Testnet delivery with this package. Automated acceptance uses fabricated accounts, not real exchange credentials or orders.
+A single native app with Spot and Futures tabs. It contains real Binance trading endpoints and is intended for the owner's personal acceptance first. Customer Whop licensing is not integrated and existing Testnet downloads are not replaced. Offline and native-launch acceptance do not prove real-account execution.
 
-## Scope
+## Install and existing data
 
-USD-M USDT/USDC linear perpetuals and COIN-M inverse perpetuals, long and short, cross and isolated margin, account-specific leverage brackets, built-in EMA/RSI/ATR signals or data-only external JSON. One selected contract and one bot-owned position at a time. Both Futures wallets must be readable. Classic accounts and USD-M Single-Asset mode are required; Portfolio Margin and delivery contracts are unsupported. Existing manual positions, other bots and Spot records are never adopted.
+Extract the entire ZIP first. Windows x64 includes an EXE installer. Debian/Ubuntu x64 includes a DEB; if necessary run `sudo apt install ./AdaptiveTradingBot-Live-0.3.0-linux-amd64.deb` in the extracted directory. On Mac choose arm64 for Apple Silicon or x64 for Intel, then move Adaptive Trading Bot Live.app into Applications. Windows and Mac builds are unsigned; Mac is not notarized. Verify the source/checksums and use the operating system's per-app exception rather than disabling system protection globally.
 
-## Install
+Core Chinese interface glyphs and an OFL license are bundled for Linux and offline HTML guides. Spot retains its LivePersonal configuration and ledger; Futures retains FuturesPersonal; Testnet remains separate. Legacy single-leg Futures ledgers are backed up and migrated while preserving orders, fills and fees. Do not run an old independent app against the same profile concurrently.
 
-- Windows x64: fully extract the ZIP, run its EXE installer, then open Adaptive Futures Bot.
-- Debian/Ubuntu x64: extract the ZIP before installing the DEB. If needed, run `sudo apt install ./AdaptiveFuturesBot-0.1.0-linux-amd64.deb` from its directory. Launch Adaptive Futures Bot from the app menu.
-- Mac: choose arm64 for Apple Silicon or x64 for Intel. Extract and move Adaptive Futures Bot.app to Applications. The app is unsigned and not notarized. Verify the source and checksums before using the operating system's per-app opening exception; do not disable system protection globally.
+Switching tabs does not automatically start or stop trading. Both activity indicators remain visible. The global stop stops Spot trading, Futures trading and local JSON automatic margin additions. System sleep also stops automation; resuming does not silently restart it.
 
-The four packages are desktop applications, not mobile apps. Guides and the external JSON example are in the ZIP's Guides folder.
+## Spot
 
-## Connect, review and start
+Open Spot, create/unlock a local vault password of at least 12 characters, and use your own mainnet Spot API Key with its HMAC Secret or matching Spot Ed25519 PEM. The app can generate/recover a registration public key; register that public key at Binance and enter the corresponding API Key returned by Binance. An API Key is not a private key.
 
-1. In Connection & risk, choose a local vault password of at least 12 characters and repeat it. There is no cloud password recovery.
-2. Enter your own Binance mainnet Futures API Key and either its HMAC Secret or matching RSA PEM. Account-read and Futures-trading permissions are required; withdrawal permission is unnecessary. This app does not reuse your Spot Ed25519 key.
-3. For RSA, generate/recover the registration public key in the app, register that public key at Binance, then enter the API Key returned by Binance. That API Key is not a private key. The private key stays encrypted locally. The same password recovers the same generated public key.
-4. Select the family and perpetual symbol. Read existing Binance settings first. This reads the account, margin mode and leverage without creating an order or changing the account.
-5. Choose initial margin of 1%–2% of total Futures equity, direction, mode and leverage. Save the encrypted local configuration. Automatic connection after unlocking is read-only; it does not automatically start trading.
-6. If selected mode/leverage differ from the exchange, first be flat, stopped and reconciled, then type `APPLY FUTURES SETTINGS` and explicitly apply them. Only the selected contract is changed. Account-wide One-Way/Hedge mode is preserved. Disable isolated automatic margin addition at Binance before starting.
-7. Run a read-only check. Review equity, fees, actual margin mode and leverage, planned margin/notional, signal and protection. Below-minimum allocations are rejected rather than increased without permission.
-8. Personally type `START REAL FUTURES TRADING` and start. The strategy checks about every five seconds. Entries use limit IOC and may fill partially or not at all. Accounting uses actual fills. Re-entry waits at least one minute after closing; at most six new entries per hour.
+Save and perform a read-only check before personally typing `START REAL SPOT TRADING`. Built-in trading signals and external Spot JSON rules remain available. Manual inventory is not automatically adopted. Read-only reconnect does not restart trading.
 
-## Margin and risk accounting
+## Futures setup and position mode
 
-The 1%–2% allocation is INITIAL MARGIN, not contract notional. For 1000 USDT total Futures equity, 2% budgets 20 USDT initial margin. At 10x that is approximately 200 USDT notional, subject to filters and rounding. Cross margin may consume other available collateral. The initial margin figure is not a guaranteed maximum loss.
+In Futures → Connection & risk, use your own mainnet Futures API Key with either HMAC Secret or matching RSA PEM. The Spot Ed25519 PEM is not a Futures RSA PEM. Both Futures wallets must be readable, USD-M Single-Asset mode is required, and Portfolio Margin is unsupported. Withdrawal permission is not needed.
 
-Both Futures wallets are valued together in USDT, including unrealized PNL and changes in collateral-coin prices. Spot holdings are excluded. Trading commissions are recorded on actual executions; funding is recorded as native-asset cash flow. Slippage is embedded in execution prices and is not debited twice. Unexpected transfers, manual trades, liquidation or unexplained fees stop automatic activity for exchange-side review.
+Select USD-M USDT/USDC linear perpetuals or COIN-M inverse perpetuals, read current exchange settings, choose margin/leverage/allocation and save the local configuration. To change the selected contract's cross/isolated mode or leverage, first stop, be flat and reconcile orders. Save the selection, type `APPLY FUTURES SETTINGS`, then click apply. Typing alone does not submit anything.
 
-The daily boundary is midnight UTC+8. On the first day the app's opening equity is used; later baselines are reconstructed from the ledger and midnight market prices. A decline of MORE THAN 20% locks new long/short entries for the rest of that day, even after recovery. Existing owned positions can still exit. A new day needs a reliable new baseline. This is an entry-stop trigger, not a guaranteed 20% loss cap.
+Single-position management holds one direction at a time. Dual-leg management permits one long and one short on the selected perpetual, with independent entry/exit decisions and exchange protection. Changing contract, family or trading strategy requires stopped, flat and reconciled state.
 
-## Protection, stopping and uncertain orders
+The account position-mode section shows actual Binance One-Way/Hedge mode. A local selection does not silently change Binance. To enable Hedge Mode, both Futures wallets must be flat with no ordinary or conditional orders. Type `ENABLE FUTURES HEDGE MODE` and explicitly apply. Binance's shared mode affects both families. The app never silently disables Hedge Mode.
 
-Entry and exchange stop submission are separate requests, so there is an unprotected interval. The app verifies stop-query capability before entry, then submits a mark-price STOP_MARKET after fills are confirmed. A rejected, unknown or already-crossed stop halts automation and preserves records. Check Binance immediately and personally close if necessary. Neither stop execution nor execution price is guaranteed.
+## Trading and manual equal hedge
 
-Stopping preserves confirmed exchange stops and existing positions. The explicit market-close button only closes the reconciled bot-owned position and requires the trading confirmation text. After shutdown, local take-profit, trailing exits and monitoring stop; an accepted exchange stop remains subject to exchange processing. Partial exits with mismatched protection quantities require review. Do not repeatedly restart or delete the ledger to bypass an error.
+Type `START REAL FUTURES TRADING` to start. Long and short quantities, entry prices, protection and liquidation prices are shown separately. Each leg has its own stop and close action. Market-close actions require the trading confirmation and affect only the selected reconciled bot-owned direction.
 
-Unknown submissions are queried using the original order ID, never blindly resubmitted. Manual account changes can prevent automatic reconciliation. This edition is not designed to run concurrently with another bot or manual trading in either Futures wallet.
+For manual equal hedging, click the read-only preview. Review direction, quantity difference, initial margin and notional. Type `LOCK FUTURES POSITION` and submit. Trading pauses before account review; the smaller leg is increased by the quantity difference, subject to existing funds, chosen initial-margin budget, venue filters, leverage brackets and daily entry lock. It does not silently enlarge the budget to achieve equality.
 
-## External rules and review
+IOC orders may fill partially. Partial coverage is shown accurately and is not blindly resubmitted. Another explicit preview/confirmation is needed to supplement the difference. Manual hedge state keeps automatic trading paused. Both exchange stops remain active; a stop, a manual close or funding can change coverage. Hedging is not guaranteed profit freezing. Releasing the manual pause requires the trading confirmation, does not close positions, and does not automatically restart trading.
 
-`example-futures-strategy.json` defines separate long/short entries/exits and bounded price-based stop-loss, take-profit and trailing percentages. Percentages describe underlying price movement, not leveraged margin return. JSON cannot execute code or silently change leverage, margin allocation or the daily guard. Import/reset only when stopped, flat and reconciled, using the vault password.
+## Allocation, costs and daily guard
 
-CSV exports record reconciled orders. Review exports are local Markdown reports with equity, daily baseline, settings, orders, funding and discussion questions. No messages are sent to customers and no paid AI is called automatically. Signals and reports do not promise profitability.
+Each new leg's initial-margin budget is 1%–2% of the combined Futures-wallet equity in USDT, default 1%. This is not notional exposure. Leverage enlarges notional; two legs occupy funds separately and are not netted to zero for sizing. Below-minimum allocations are rejected. Cross margin may use other available matching collateral and initial margin is not a guaranteed loss cap.
 
-## Local data
+Equity includes both legs' unrealized PNL, actual commissions, funding and collateral-coin price changes. Slippage is embedded in actual fill prices, not debited twice. The daily boundary is midnight UTC+8; on the first day, equity at app-ledger creation is used. A decline of more than 20% blocks new long/short entries, new hedge legs and automatic margin additions for that day. Owned positions may still reduce/close, and additional manual margin requires personal confirmation. The threshold does not guarantee a maximum 20% loss.
 
-- Windows: `%LOCALAPPDATA%/AdaptiveSpotBot/FuturesPersonal`
-- Linux: `$XDG_DATA_HOME/AdaptiveSpotBot/FuturesPersonal`, default `~/.local/share/AdaptiveSpotBot/FuturesPersonal`
-- Mac: `~/Library/Application Support/AdaptiveSpotBot/FuturesPersonal`
+## Isolated margin controls
 
-Credentials are encrypted in futures-vault.json; accounting is in futures-ledger.json. Back up the entire directory only after exiting and reconciling orders. Do not delete records to fix account mismatches or run the same account on multiple devices. Previous encrypted vault versions are backed up when saving changes. Keys are not uploaded to Whop or a Cloudflare licensing service.
+Futures → Connection & risk, section 05, shows actual exchange auto-add status as on, off or unavailable. Ordinary isolated positions whose optional auto-add is already off require no extra disabling step. Missing data is never displayed as off. This app does not present a fake exchange-side toggle. Exchange auto-add that is enabled or cannot be verified prevents simultaneous local JSON auto-add.
 
-Native offline startup and fabricated lifecycle acceptance are supplied in the package. Real-account permissions, venue-specific conditional-order behavior and actual fills have not been exercised by the agent. The owner must perform personal live acceptance before any customer delivery.
+For manual addition, select LONG/SHORT, enter the amount in the displayed native collateral asset, type `ADD ISOLATED MARGIN`, and submit. USD-M uses USDT/USDC and COIN-M uses its collateral coin: 5 USDT must not be entered as 5 BTC. Automation stops first. Only owned isolated positions can be topped up; the app does not automatically remove margin.
+
+An addition reallocates money inside the Futures wallet, does not increase contract quantity and is not counted as a deposit or profit. Unknown responses retain the original intent and query margin-change history; they are not retried blindly. Avoid simultaneous matching manual changes at Binance, which can make attribution uncertain and require manual review.
+
+## External JSON automatic margin only
+
+Section 06 has no built-in margin-addition strategy. Built-in trading signals remain separate. The sample JSON is disabled with zero spending values and cannot spend by itself. The user must supply these explicit fields:
+
+- `id`: persistent budget identity; reimport/restart does not reset usage.
+- `enabled`, `market`, `symbol`, `asset`, `positionSides`: explicit enablement and matching target/collateral/directions.
+- `trigger.liquidationDistancePercentAtMost`: user-selected percent distance between mark price and the exchange's liquidation price.
+- `perAdditionAmount`: native collateral amount for each addition, as a decimal string.
+- `maxTotalAmount`, `maxAdditions`: combined automatic amount/count limits across both directions for that identity and contract.
+- `cooldownSeconds`: at least 30 seconds when enabled.
+
+Stop automation, import your own JSON with the vault password, review its target and persistent usage, type `ENABLE JSON AUTO MARGIN`, and explicitly enable it. Starting trading requires a separate confirmation. Both activity states stay visible when switching tabs.
+
+After restart, sleep or a connection error, explicit rearming is required. The rule only runs while the app is running and armed, not at the exchange after shutdown. It will not execute with unknown orders, unconfirmed protection/native auto-add status/liquidation prices, insufficient funds, daily lock, cooldown or exhausted budget. It cannot guarantee completion before liquidation.
+
+Confirmed history debits the durable automatic budget; unknown results do not cause duplicate additions. Parameter edits or reimport of the same ID preserve its usage, and that ID cannot be rebound to another asset or contract. A different ID explicitly creates another budget and should be reviewed as additional exposure.
+
+## Stopping, records and acceptance
+
+Stopping automation does not automatically close Spot inventory or Futures positions. Accepted exchange stops remain subject to exchange processing. Local take-profit, trailing exits and automatic margin actions stop at shutdown. Entry and protection are separate requests with an unprotected interval; neither stop execution nor price is guaranteed. Preserve uncertain requests and inspect Binance promptly, handling the account personally if needed.
+
+Do not delete ledgers to bypass errors, run other bots or trade manually in the same Futures wallets. Export CSV/review reports before discussing new rules. No customer messages or paid AI calls are automatic.
+
+Profiles remain in `AdaptiveSpotBot/LivePersonal` and `AdaptiveSpotBot/FuturesPersonal` under Windows LOCALAPPDATA, Linux XDG_DATA_HOME (default `~/.local/share`) or macOS `~/Library/Application Support`. Back up the entire directory only after exit and reconciliation. API keys remain encrypted locally and are not uploaded to Whop or Cloudflare.

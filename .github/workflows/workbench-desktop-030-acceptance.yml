@@ -1,0 +1,91 @@
+name: Unified Personal Trading Desktop 0.3.0 native offline acceptance
+on:
+  push:
+    branches: [codex/live-workbench-030]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: win
+            arch: x64
+          - os: ubuntu-24.04
+            target: linux
+            arch: x64
+          - os: macos-15
+            target: mac
+            arch: arm64
+          - os: macos-15-intel
+            target: mac
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Offline order accounting, stop, reconnect and strategy regressions
+        run: node --test products/futures-live-pilot/live/*.test.mjs products/live-workbench/server.test.mjs products/spot-live-pilot/live/live.test.mjs tests/testnet-adaptive.test.mjs
+      - name: Stage only public runtime source
+        run: node scripts/stage-workbench-desktop.mjs
+      - name: Install pinned desktop dependencies
+        working-directory: products/adaptive-live-workbench-desktop
+        run: npm ci --no-audit --no-fund
+      - name: Fetch official native Electron runtime
+        working-directory: products/adaptive-live-workbench-desktop
+        run: node node_modules/electron/install.js
+      - name: Build native unpacked application
+        working-directory: products/adaptive-live-workbench-desktop
+        run: npx electron-builder --${{ matrix.target }} --${{ matrix.arch }} --dir --publish never
+      - name: Enable Chromium sandbox in the disposable Linux runner
+        if: runner.os == 'Linux'
+        run: |
+          sudo chown root:root "exports/live-workbench-build-0.3.0/linux-unpacked/chrome-sandbox"
+          sudo chmod 4755 "exports/live-workbench-build-0.3.0/linux-unpacked/chrome-sandbox"
+      - name: Test packaged Windows app without credentials
+        if: runner.os == 'Windows'
+        run: node scripts/native-workbench-desktop-smoke.mjs "exports/live-workbench-build-0.3.0/win-unpacked/Adaptive Trading Bot Live.exe" "exports/workbench-native-qa-Windows-x64"
+      - name: Test packaged Linux app without credentials
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/native-workbench-desktop-smoke.mjs "exports/live-workbench-build-0.3.0/linux-unpacked/adaptive-trading-bot-live-personal" "exports/workbench-native-qa-Linux-x64"
+      - name: Test packaged Mac app without credentials
+        if: runner.os == 'macOS'
+        run: node scripts/native-workbench-desktop-smoke.mjs "exports/live-workbench-build-0.3.0/mac${{ matrix.arch == 'arm64' && '-arm64' || '' }}/Adaptive Trading Bot Live.app/Contents/MacOS/Adaptive Trading Bot Live" "exports/workbench-native-qa-Mac-${{ matrix.arch }}"
+      - name: Build native installer and distributable
+        working-directory: products/adaptive-live-workbench-desktop
+        run: npx electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never
+      - name: Test installed Debian package in the disposable runner
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y ./exports/live-workbench-build-0.3.0/*.deb
+          xvfb-run -a node scripts/native-workbench-desktop-smoke.mjs "/usr/bin/adaptive-trading-bot-live-personal" "exports/workbench-native-qa-Linux-installed-x64"
+      - name: Package native app with Chinese and English guides
+        run: python scripts/package-workbench-desktop.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: workbench-desktop-030-qa-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            exports/workbench-native-qa-*/RESULT.json
+            exports/workbench-native-qa-*/FAILED.txt
+            exports/workbench-native-qa-*/*.png
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workbench-desktop-030-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            exports/AdaptiveTradingBot-Live-0.3.0/*.zip
+            exports/AdaptiveTradingBot-Live-0.3.0/RESULT-*.json
+          retention-days: 7

@@ -10,7 +10,7 @@ import { marketRules, commissionRates, quoteBook, makeOrderPlan } from './risk.m
 import { accountIdentity, balance, newLedger, validateLedger, validateFinalOrder, applyFinalOrder, markedEquity } from './ledger.mjs';
 import { units, decimal, multiply, floorStep } from './decimal.mjs';
 
-export const LIVE_VERSION = '0.2.0-personal';
+export const LIVE_VERSION = '0.3.0-personal';
 export function validateSettings(value) {
   if (!value || Object.keys(value).some(key => !['symbol', 'sizing', 'buyPercent', 'dailyLossPercent', 'riskBasis', 'externalStrategy'].includes(key))) throw new Error('INVALID_LIVE_SETTINGS');
   liveSymbol(value.symbol);

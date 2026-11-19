@@ -1,4 +1,4 @@
-# Adaptive Spot Bot · Live Personal Desktop 0.2.0
+# Adaptive Spot Bot · Live Personal Desktop 0.3.0
 
 这是个人自行运行的币安正式现货程序。支持按官方目录选择 USDT 现货交易对、自适应 EMA / RSI / ATR 信号、外置 JSON 规则、真实限价 IOC 委托、手续费与成交账本、客户复盘报告。每个资金账本同一时间管理一个主要交易对，零碎余额继续计入权益。
 

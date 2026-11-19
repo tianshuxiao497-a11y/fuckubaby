@@ -3,8 +3,12 @@ import {family} from './math.mjs';
 import {contractSymbol} from './market.mjs';
 export const FUTURES_CONFIRMATION='START REAL FUTURES TRADING';
 export const SETTINGS_CONFIRMATION='APPLY FUTURES SETTINGS';
+export const MODE_CONFIRMATION='ENABLE FUTURES HEDGE MODE';
+export const MARGIN_CONFIRMATION='ADD ISOLATED MARGIN';
+export const HEDGE_CONFIRMATION='LOCK FUTURES POSITION';
 export const ownOrderId=value=>typeof value==='string'&&/^asbf_[a-f0-9]{28}$/.test(value);
 export const ownAlgoId=value=>typeof value==='string'&&/^asbp_[a-f0-9]{28}$/.test(value);
+export const ownMarginId=value=>typeof value==='string'&&/^asbm_[a-f0-9]{28}$/.test(value);
 const positive=value=>typeof value==='string'&&/^\d{1,18}(\.\d{1,12})?$/.test(value)&&Number(value)>0;
 const asset=value=>typeof value==='string'&&/^[A-Z0-9]{2,24}$/.test(value);
 function routes(market){
@@ -34,6 +38,9 @@ function routes(market){
     ['cancelProtection',['DELETE',prefix+'/v1/algoOrder',['clientAlgoId'],true]],
     ['setMargin',['POST',prefix+'/v1/marginType',['symbol','marginType'],true]],
     ['setLeverage',['POST',prefix+'/v1/leverage',['symbol','leverage'],true]],
+    ['setPositionMode',['POST',prefix+'/v1/positionSide/dual',['dualSidePosition'],true]],
+    ['addMargin',['POST',prefix+'/v1/positionMargin',['symbol','positionSide','amount','type'],true]],
+    ['marginHistory',['GET',prefix+'/v1/positionMargin/history',['symbol','type','startTime','endTime','limit'],true]],
     ...(market==='USD_M'?[
       ['multiAssets',['GET','/fapi/v1/multiAssetsMargin',[],true]],
       ['symbolConfig',['GET','/fapi/v1/symbolConfig',['symbol'],true]],
@@ -50,7 +57,7 @@ async function boundedJson(response){
 }
 function closing(parameters){return parameters.reduceOnly==='true'||(parameters.positionSide==='LONG'&&parameters.side==='SELL')||(parameters.positionSide==='SHORT'&&parameters.side==='BUY');}
 export class FuturesClient{
-  #key;#secret;#rsa;#fetch;#now;#offset;#syncedAt;#armed=false;#settings=false;#blocked=false;#routes;#origin;
+  #key;#secret;#rsa;#fetch;#now;#offset;#syncedAt;#armed=false;#settings=false;#mode=false;#margin=false;#blocked=false;#routes;#origin;
   constructor({market,apiKey='',apiSecret='',privateKeyPem='',fetchImpl=fetch,now=Date.now,...extra}={}){
     family(market);if(Object.keys(extra).length||[apiKey,apiSecret,privateKeyPem].some(x=>typeof x!=='string')||(apiSecret&&privateKeyPem)||apiKey.startsWith('apik_'))throw new Error('INVALID_FUTURES_CLIENT_OPTIONS');
     Object.defineProperty(this,'market',{value:market,enumerable:true});this.#origin=market==='USD_M'?'https://fapi.binance.com':'https://dapi.binance.com';
@@ -60,19 +67,23 @@ export class FuturesClient{
   get origin(){return this.#origin;}
   serverNow(){if(this.#offset===undefined)throw new Error('FRESH_FUTURES_CLOCK_REQUIRED');return Math.floor(this.#now()+this.#offset);}
   arm(value){if(value!==FUTURES_CONFIRMATION)throw new Error('EXPLICIT_FUTURES_START_REQUIRED');if(this.#blocked)throw new Error('FUTURES_SERVICE_BLOCKED');this.#armed=true;}
-  disarm(){this.#armed=false;this.#settings=false;}
+  disarm(){this.#armed=false;this.#settings=false;this.#mode=false;this.#margin=false;}
   armSettings(value){if(value!==SETTINGS_CONFIRMATION)throw new Error('EXPLICIT_MARGIN_AND_LEVERAGE_CONFIRMATION_REQUIRED');if(this.#blocked)throw new Error('FUTURES_SERVICE_BLOCKED');this.#settings=true;}
+  armMode(value){if(value!==MODE_CONFIRMATION)throw new Error('EXPLICIT_ACCOUNT_HEDGE_MODE_CONFIRMATION_REQUIRED');if(this.#blocked)throw new Error('FUTURES_SERVICE_BLOCKED');this.#mode=true;}
+  armMargin(value){if(value!==MARGIN_CONFIRMATION)throw new Error('EXPLICIT_ISOLATED_MARGIN_ADDITION_REQUIRED');if(this.#blocked)throw new Error('FUTURES_SERVICE_BLOCKED');this.#margin=true;}
+  disarmMargin(){this.#margin=false;}
   async syncTime(){const before=this.#now(),result=await this.request('time'),after=this.#now();if(!Number.isSafeInteger(result.serverTime)||result.serverTime<=0||after<before||after-before>5000)throw new Error('UNRELIABLE_FUTURES_CLOCK');this.#offset=result.serverTime-after-250;this.#syncedAt=after;return result.serverTime;}
   async request(name,parameters={}){
     const route=this.#routes.get(name);if(!route||!parameters||typeof parameters!=='object'||Array.isArray(parameters)||Object.keys(parameters).some(k=>!route[2].includes(k)))throw new Error('FUTURES_ROUTE_OR_PARAMETER_REFUSED');
     if(this.#blocked)throw new Error('FUTURES_SERVICE_BLOCKED');
     const [method,path,,signed,publicOrigin]=route;
     if(parameters.symbol!==undefined){if(publicOrigin){if(!/^[A-Z0-9]{2,24}USDT$/.test(parameters.symbol))throw new Error('INVALID_COLLATERAL_PRICE_SYMBOL');}else contractSymbol(parameters.symbol);}
-    if(['book','mark','fees','brackets','newOrder','newProtection','setMargin','setLeverage','order','trades'].includes(name)&&!parameters.symbol)throw new Error('EXPLICIT_CONTRACT_REQUIRED');
+    if(['book','mark','fees','brackets','newOrder','newProtection','setMargin','setLeverage','order','trades','addMargin','marginHistory'].includes(name)&&!parameters.symbol)throw new Error('EXPLICIT_CONTRACT_REQUIRED');
     if(name.endsWith('Candles')||name==='candles'){
       if(parameters.interval!=='1m'||!Number.isSafeInteger(parameters.limit)||parameters.limit<1||parameters.limit>120)throw new Error('BOUNDED_MINUTE_CANDLES_REQUIRED');
     }
     if(['trades','income'].includes(name)&&parameters.limit!==1000)throw new Error('BOUNDED_FUTURES_HISTORY_REQUIRED');
+    if(name==='marginHistory'&&(parameters.limit!==100||parameters.type!==1))throw new Error('BOUNDED_MARGIN_ADDITION_HISTORY_REQUIRED');
     for(const field of ['startTime','endTime','orderId','algoId','fromId'])if(parameters[field]!==undefined&&(!Number.isSafeInteger(parameters[field])||parameters[field]<0))throw new Error('INVALID_FUTURES_HISTORY_REFERENCE');
     if(name==='order'&&!(ownOrderId(parameters.origClientOrderId)||Number.isSafeInteger(parameters.orderId)&&parameters.orderId>0))throw new Error('EXPLICIT_OWNED_ORDER_REFERENCE_REQUIRED');
     if(name==='algo'&&!(ownAlgoId(parameters.clientAlgoId)||Number.isSafeInteger(parameters.algoId)&&parameters.algoId>0))throw new Error('EXPLICIT_OWNED_PROTECTION_REFERENCE_REQUIRED');
@@ -82,6 +93,10 @@ export class FuturesClient{
       if(!this.#settings)throw new Error('EXPLICIT_MARGIN_AND_LEVERAGE_CONFIRMATION_REQUIRED');
       if(name==='setMargin'&&!['ISOLATED','CROSSED'].includes(parameters.marginType))throw new Error('EXPLICIT_MARGIN_MODE_REQUIRED');
       if(name==='setLeverage'&&(!Number.isSafeInteger(parameters.leverage)||parameters.leverage<1||parameters.leverage>1000))throw new Error('INVALID_SELECTED_LEVERAGE');
+    }else if(name==='setPositionMode'){
+      if(!this.#mode||parameters.dualSidePosition!=='true')throw new Error('EXPLICIT_ACCOUNT_HEDGE_MODE_CONFIRMATION_REQUIRED');
+    }else if(name==='addMargin'){
+      if(!this.#margin||parameters.type!==1||!positive(parameters.amount)||!['BOTH','LONG','SHORT'].includes(parameters.positionSide))throw new Error('EXPLICIT_ISOLATED_MARGIN_ADDITION_REQUIRED');
     }else if(method!=='GET'&&!this.#armed)throw new Error('EXPLICIT_FUTURES_START_REQUIRED');
     if(['newOrder','newProtection'].includes(name)){
       if(!['BUY','SELL'].includes(parameters.side)||!['BOTH','LONG','SHORT'].includes(parameters.positionSide)||!positive(parameters.quantity))throw new Error('EXPLICIT_FUTURES_POSITION_AND_QUANTITY_REQUIRED');

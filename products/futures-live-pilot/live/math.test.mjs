@@ -67,3 +67,8 @@ test('one-way negative quantities and hedge position sides remain distinct',()=>
   assert.equal(signedUnits('-0.001'),-1000000000n);
   assert.throws(()=>signedPosition({positionSide:'LONG',positionAmt:'-2'}));
 });
+test('small low-leverage isolated entries use reachable maintenance tiers, while a stop crossing a leverage tier is refused',()=>{
+  const tiers=[{leverage:100,cap:'1000',maintenanceRate:'0.004'},{leverage:20,cap:'100000',maintenanceRate:'0.5'}];
+  assert.doesNotThrow(()=>checkIsolatedStop({market:'USD_M',quantity:'1',price:'100',contractSize:'1',leverage:1,stopLossPercent:1,feeRate:'0.0005',tiers}));
+  assert.throws(()=>checkIsolatedStop({market:'USD_M',quantity:'9.99',price:'100',contractSize:'1',leverage:100,stopLossPercent:0.2,feeRate:'0.0005',tiers}));
+});
