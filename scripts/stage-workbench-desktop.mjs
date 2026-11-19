@@ -5,6 +5,7 @@ import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 const root=fileURLToPath(new URL('../',import.meta.url));
 export const WORKBENCH_DESKTOP_FILES=[
+  "lib/profile-lease.mjs",
   "products/futures-live-pilot/live/math.mjs",
   "products/futures-live-pilot/live/market.mjs",
   "products/futures-live-pilot/live/client.mjs",

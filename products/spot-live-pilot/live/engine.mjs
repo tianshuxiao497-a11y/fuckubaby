@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { createServer } from 'node:net';
 import { atomicWriteJson } from '../../../lib/atomic-json.mjs';
+import { acquireProfileLease } from '../../../lib/profile-lease.mjs';
 import { liveAdaptiveSignal, updateAdaptiveSamples } from '../../../lib/adaptive-strategy.mjs';
 import { parseExternalStrategy } from '../../../lib/external-testnet-strategy.mjs';
 import { MainnetSpotClient, LIVE_CONFIRMATION, liveSymbol } from './client.mjs';
@@ -47,15 +48,8 @@ export class LiveEngine {
     await mkdir(this.profile, { recursive: true, mode: 0o700 });
     this.lockPath = resolve(this.profile, 'mainnet.lock');
     const identity = process.platform === 'win32' ? this.profile.toLowerCase() : this.profile;
-    const lockPort = 42000 + createHash('sha256').update(identity).digest().readUInt32BE(0) % 17000;
-    const lease = createServer(socket => socket.destroy());
     try {
-      await new Promise((resolveListen, reject) => {
-        lease.once('error', reject);
-        lease.listen({ port: lockPort, host: '127.0.0.1', exclusive: true }, resolveListen);
-      });
-      this.profileLease = lease;
-      lease.unref();
+      this.profileLease = await acquireProfileLease(identity);
       try {
         const owner = (await readFile(this.lockPath, 'utf8')).trim();
         if (!/^[1-9]\d{0,9}$/.test(owner)) throw new Error('INVALID_PROFILE_OWNER');

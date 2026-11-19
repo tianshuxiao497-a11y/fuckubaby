@@ -9,6 +9,7 @@ import {contractSymbol,contractRules,leverageTiers,checkLeverage,checkIsolatedSt
 import {accountIdentity,walletSnapshot,newLedger,validateLedger,nativeWalletsAt,aggregateAssets,verifyWallets,addFunding,applyFinalOrder,ownedPositions,ownedProtections} from './ledger.mjs';
 import {parseFuturesStrategy,futuresSignal} from './strategy.mjs';
 import {parseMarginPolicy,registerMarginPolicy,autoMarginDecision,AUTO_MARGIN_CONFIRMATION,marginPolicyDigest} from './margin-policy.mjs';
+import {acquireProfileLease} from '../../../lib/profile-lease.mjs';
 export const FUTURES_VERSION='0.3.0-personal';
 export function validateSettings(value){
   const keys=['market','symbol','marginMode','leverage','marginPercent','directionMode','dailyLossPercent','externalStrategy','positionPolicy','externalMarginPolicy'];
@@ -35,10 +36,9 @@ export class FuturesEngine{
   time(){try{return this.client.serverNow?.()??this.now();}catch{return this.now();}}
   async acquire(){
     await mkdir(this.profile,{recursive:true,mode:0o700});if((await lstat(this.profile)).isSymbolicLink())throw new Error('REGULAR_FUTURES_PROFILE_REQUIRED');
-    const marker=resolve(this.profile,'futures.lock'),identity=process.platform==='win32'?this.profile.toLowerCase():this.profile,port=42000+createHash('sha256').update(identity).digest().readUInt32BE(0)%17000;
-    const socket=createServer(c=>c.destroy());
+    const marker=resolve(this.profile,'futures.lock'),identity=process.platform==='win32'?this.profile.toLowerCase():this.profile;
     try{
-      await new Promise((ok,bad)=>{socket.once('error',bad);socket.listen({host:'127.0.0.1',port,exclusive:true},ok);});this.socket=socket;socket.unref();
+      this.socket=await acquireProfileLease(identity);
       try{const pid=(await readFile(marker,'utf8')).trim();if(!/^[1-9]\d{0,9}$/.test(pid))throw new Error('INVALID_FUTURES_LOCK');try{process.kill(Number(pid),0);throw new Error('FUTURES_PROFILE_OWNER_RUNNING');}catch(e){if(e.code!=='ESRCH')throw e;}await unlink(marker);}catch(e){if(e.code!=='ENOENT')throw e;}
       this.lock=await open(marker,'wx',0o600);await this.lock.writeFile(String(process.pid));await this.lock.sync();this.lockPath=marker;
       try{const info=await lstat(this.file);if(!info.isFile()||info.isSymbolicLink()||info.size>67108864)throw new Error('INVALID_FUTURES_LEDGER_FILE');const saved=JSON.parse(await readFile(this.file,'utf8'));this.state=validateLedger(saved);if(saved.version===1){const backups=resolve(this.profile,'backups');await mkdir(backups,{recursive:true,mode:0o700});if((await lstat(backups)).isSymbolicLink())throw new Error('LINKED_FUTURES_BACKUP_REFUSED');await copyFile(this.file,resolve(backups,'futures-ledger-v1-'+this.now()+'-'+randomBytes(4).toString('hex')+'.json'),constants.COPYFILE_EXCL);}}catch(e){if(e.code!=='ENOENT')throw e;}

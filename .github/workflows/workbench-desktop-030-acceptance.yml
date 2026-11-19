@@ -37,7 +37,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Offline order accounting, stop, reconnect and strategy regressions
-        run: node --test products/futures-live-pilot/live/*.test.mjs products/live-workbench/server.test.mjs products/spot-live-pilot/live/live.test.mjs tests/testnet-adaptive.test.mjs
+        run: node --test products/futures-live-pilot/live/*.test.mjs products/live-workbench/server.test.mjs products/spot-live-pilot/live/live.test.mjs tests/testnet-adaptive.test.mjs tests/profile-lease.test.mjs
       - name: Stage only public runtime source
         run: node scripts/stage-workbench-desktop.mjs
       - name: Install pinned desktop dependencies
