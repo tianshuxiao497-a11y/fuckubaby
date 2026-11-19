@@ -2,8 +2,8 @@
   "font": "Noto Sans SC",
   "license": "SIL OFL 1.1",
   "subset": "Static user-interface glyphs; retrieved using Google Fonts text subsetting",
-  "glyphCount": 700,
-  "sha256": "ebedc42b979c7fa58ff9b19bf82c2dc34f92e0c688c78a5bc95ef9340285810b",
+  "glyphCount": 707,
+  "sha256": "7ef12f01769920ca1c2f94fcc79e721380e4476c61a20dc86bcb04cd7a54da06",
   "source": "https://fonts.google.com/noto/specimen/Noto+Sans+SC",
   "licenseSource": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanssc/OFL.txt"
 }

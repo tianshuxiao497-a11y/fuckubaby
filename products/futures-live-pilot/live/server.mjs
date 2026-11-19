@@ -19,19 +19,22 @@ const safeError=error=>/^[A-Z0-9_]+$/.test(error?.message??'')?error.message:'FU
 function credentials(value){if(!value||Object.keys(value).some(k=>!['apiKey','apiSecret','privateKeyPem'].includes(k))||typeof value.apiKey!=='string'||!value.apiKey.trim()||(!!value.apiSecret===!!value.privateKeyPem))throw new Error('ONE_FUTURES_SIGNATURE_METHOD_REQUIRED');return value;}
 function preferences(value){if(value===undefined)return {autoConnect:false};if(!value||Object.keys(value).join(',')!=='autoConnect'||typeof value.autoConnect!=='boolean')throw new Error('INVALID_FUTURES_CONNECTION_PREFERENCE');return value;}
 async function bodyOf(request){let size=0;const parts=[];for await(const part of request){size+=part.length;if(size>32768)throw new Error('FUTURES_REQUEST_TOO_LARGE');parts.push(part);}try{return JSON.parse(Buffer.concat(parts).toString('utf8'));}catch{throw new Error('INVALID_FUTURES_REQUEST_JSON');}}
-export async function createFuturesServer({profile=defaultProfile(),port=0,now=Date.now,pollMs=5000,embeddingOrigin=null,clientFactory=value=>Object.fromEntries(['USD_M','COIN_M'].map(market=>[market,new FuturesClient({market,...value})]))}={}){
+export async function createFuturesServer({profile=defaultProfile(),port=0,now=Date.now,pollMs=5000,embeddingOrigin=null,tradingAllowed=()=>true,clientFactory=value=>Object.fromEntries(['USD_M','COIN_M'].map(market=>[market,new FuturesClient({market,...value})]))}={}){
+  if(typeof tradingAllowed!=='function')throw new Error('TRADING_AUTHORIZATION_REQUIRED');
   if(embeddingOrigin!==null){let url;try{url=new URL(embeddingOrigin);}catch{throw new Error('INVALID_WORKBENCH_ORIGIN');}if(url.protocol!=='http:'||url.hostname!=='127.0.0.1'||!url.port||url.origin!==embeddingOrigin)throw new Error('INVALID_WORKBENCH_ORIGIN');}
   if(!Number.isSafeInteger(pollMs)||pollMs<20)throw new Error('INVALID_FUTURES_MONITOR_INTERVAL');
   const token=randomBytes(32).toString('hex'),vaultPath=resolve(profile,'futures-vault.json');let origin,engine=null,secret=null,settings=null,prefs={autoConnect:false},closing=false,actionBusy=false,nextCheck=Infinity,failures=0;
   let vaultExists=await lstat(vaultPath).then(()=>true,e=>{if(e.code==='ENOENT')return false;throw e;});
   const logs=[];const record=(event,code=null)=>{logs.push({time:now(),event,code});if(logs.length>200)logs.shift();};
-  const status=()=>({version:FUTURES_VERSION,environment:'BINANCE_FUTURES_MAINNET',edition:'personal',running:engine?.running??false,autoMarginArmed:engine?.autoMarginArmed??false,unlocked:!!engine,vaultExists,settings,preferences:prefs,
+  const status=()=>({version:FUTURES_VERSION,environment:'BINANCE_FUTURES_MAINNET',tradingAuthorized:tradingAllowed()===true,edition:'personal',running:engine?.running??false,autoMarginArmed:engine?.autoMarginArmed??false,unlocked:!!engine,vaultExists,settings,preferences:prefs,
     connected:!!engine?.last?.accountChecked&&!engine.error&&now()>=engine.last.localCheckedAt&&now()-engine.last.localCheckedAt<30000,snapshot:engine?.last??null,pending:!!engine?.state?.pending,error:engine?.error??null,reconnecting:!!engine&&prefs.autoConnect&&failures>0,logs:logs.slice(-100)});
   async function replace(data){
     if(engine?.running||engine?.autoMarginArmed||engine?.busy||engine?.state?.pending||ownedPositions(engine?.state).length)throw new Error('FLAT_STOPPED_RECONCILED_FUTURES_PROFILE_REQUIRED');
     const config=validateSettings(data.settings),savedPrefs=preferences(data.preferences),savedCredentials=credentials(data.credentials),clients=clientFactory(savedCredentials);
     await engine?.close();engine=null;secret=null;settings=null;nextCheck=Infinity;
-    const candidate=new FuturesEngine({profile,clients,settings:config,now,guard:()=>!closing});await candidate.acquire();engine=candidate;secret=savedCredentials;settings=config;prefs=savedPrefs;failures=0;
+    // An expired subscription blocks risk increases; a manually confirmed close
+    // of an existing owned leg remains available.
+    const candidate=new FuturesEngine({profile,clients,settings:config,now,guard:plan=>!closing&&(tradingAllowed()===true||['CLOSE_LONG','CLOSE_SHORT'].includes(plan?.intent))});await candidate.acquire();engine=candidate;secret=savedCredentials;settings=config;prefs=savedPrefs;failures=0;
   }
   async function monitor(){
     if(closing||!engine||(!engine.running&&!engine.autoMarginArmed&&!prefs.autoConnect)||actionBusy||engine.busy||now()<nextCheck)return;
@@ -56,6 +59,7 @@ export async function createFuturesServer({profile=defaultProfile(),port=0,now=D
       const body=await bodyOf(request);
       if(path==='/api/stop'){engine?.stop();record('FUTURES_MANUAL_STOP');return reply(200,status());}
       if(path==='/api/auto-margin-stop'){engine?.stopAutoMargin();record('JSON_AUTO_MARGIN_STOPPED');return reply(200,status());}
+      if(['/api/start','/api/hedge-lock','/api/contract-settings','/api/hedge-mode','/api/add-margin','/api/auto-margin-start'].includes(path)&&tradingAllowed()!==true)return reply(403,{error:'ACTIVE_LIVE_SUBSCRIPTION_REQUIRED'});
       if(actionBusy||engine?.busy)throw new Error('FUTURES_ACTION_IN_PROGRESS');actionBusy=true;
       try{
         if(path==='/api/preflight'){

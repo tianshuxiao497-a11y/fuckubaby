@@ -168,7 +168,10 @@ export class FuturesEngine{
   async cancelProtection(direction,{replace=false}={}){
     const p=this.state?.protections[direction];if(!p)return;if(this.state.positions[direction]&&!replace)throw new Error('FLAT_POSITION_REQUIRED_BEFORE_PROTECTION_REMOVAL');
     await this.commit({...this.state,pending:{kind:'CANCEL_PROTECTION',market:p.market,direction,id:p.id,createdAt:this.time()}});
-    if(!this.running||!this.guard()){await this.commit({...this.state,pending:null});throw new Error('START_REQUIRED_TO_REPAIR_EXCHANGE_PROTECTION');}
+    // A completed owned close may remove its now-unneeded stop after expiry.
+    // Replacing a stop on a remaining position still needs normal permission.
+    const authorizationPlan=this.state.positions[direction]?undefined:{intent:'CLOSE_'+direction};
+    if(!this.running||!this.guard(authorizationPlan)){await this.commit({...this.state,pending:null});throw new Error('START_REQUIRED_TO_REPAIR_EXCHANGE_PROTECTION');}
     await this.clients[p.market].request('cancelProtection',{clientAlgoId:p.id});await this.reconcile();
   }
   async ensureProtections(){
@@ -271,18 +274,18 @@ export class FuturesEngine{
   }
   syncLastState(){if(this.last&&this.state){Object.assign(this.last,{positions:this.state.positions,protections:this.state.protections,position:this.state.position,protection:this.state.protection,pending:this.state.pending,hedgeLock:this.state.hedgeLock,orders:this.state.orders.slice(-50),marginEvents:this.state.marginEvents.slice(-50),realOrderCount:this.state.orders.length,running:this.running});if(this.last.autoMargin){this.last.autoMargin.armed=this.autoMarginArmed;const id=this.settings.externalMarginPolicy?.id;this.last.autoMargin.budget=id?this.state.autoMarginBudgets[id]??null:null;}}}
   async execute(plan){
-    if(!this.running||!this.guard()||this.state.pending||this.time()<this.last.checkedAt||this.time()-this.last.checkedAt>3000||JSON.stringify(plan)!==JSON.stringify(this.last.plan))throw new Error('REVIEWED_FRESH_FUTURES_PLAN_REQUIRED');
+    if(!this.running||!this.guard(plan)||this.state.pending||this.time()<this.last.checkedAt||this.time()-this.last.checkedAt>3000||JSON.stringify(plan)!==JSON.stringify(this.last.plan))throw new Error('REVIEWED_FRESH_FUTURES_PLAN_REQUIRED');
     if(this.state.hedgeLock?.active&&!plan.manualLock)throw new Error('MANUAL_HEDGE_LOCK_STRATEGY_PAUSED');
     if(plan.intent.startsWith('OPEN_')&&(this.state.day.blocked||this.state.protections[plan.direction]&&!plan.allowLockIncrease||this.state.positions[plan.direction]&&!plan.allowLockIncrease||this.settings.positionPolicy==='single'&&ownedPositions(this.state).length))throw new Error('FUTURES_OPENING_BLOCKED');
     const id=entryId(),pending={kind:'ORDER',id,createdAt:this.time(),market:plan.market,intent:plan.intent,direction:plan.direction,args:plan.args,rules:plan.rules,risk:plan.risk,allowLockIncrease:plan.allowLockIncrease===true};await this.commit({...this.state,pending});
-    if(!this.running||!this.guard()||this.time()-this.last.checkedAt>3000){await this.commit({...this.state,pending:null});return;}
+    if(!this.running||!this.guard(plan)||this.time()-this.last.checkedAt>3000){await this.commit({...this.state,pending:null});return;}
     try{await this.clients[plan.market].request('newOrder',{...plan.args,newClientOrderId:id});}catch(error){if(error.definitiveRejection)await this.commit({...this.state,pending:{...this.state.pending,definitiveRejection:error.binanceCode}});throw error;}await this.reconcile();await this.ensureProtections();
   }
   armTrading(){for(const client of Object.values(this.clients))client.arm(FUTURES_CONFIRMATION);this.running=true;}
   async start(confirmation){
     if(confirmation!==FUTURES_CONFIRMATION)throw new Error('EXPLICIT_FUTURES_START_REQUIRED');await this.check();if(this.state.pending)throw new Error('RECONCILE_PENDING_FUTURES_RESULT_FIRST');if(this.state.hedgeLock?.active)throw new Error('MANUAL_HEDGE_LOCK_STRATEGY_PAUSED');
     if(!this.last.actualConfigurationMatches)throw new Error('APPLY_SELECTED_CONTRACT_SETTINGS_FIRST');if(this.settings.positionPolicy==='hedge'&&!this.last.hedge)throw new Error('ENABLE_EXCHANGE_HEDGE_MODE_FIRST');if(this.last.configuration.marginMode==='ISOLATED'&&this.last.configuration.autoAddMargin===true)throw new Error('ISOLATED_AUTO_ADD_MARGIN_MUST_BE_DISABLED');if(this.state.day.blocked&&!ownedPositions(this.state).length)throw new Error('DAILY_USDT_EQUITY_LOSS_20_PERCENT');
-    this.armTrading();try{await this.ensureProtections();}catch(error){this.stop();throw error;}this.syncLastState();return this.last;
+    if(!this.guard())throw new Error('FUTURES_START_AUTHORIZATION_REQUIRED');this.armTrading();try{await this.ensureProtections();}catch(error){this.stop();throw error;}this.syncLastState();return this.last;
   }
   async applyContractSettings(confirmation){
     if(confirmation!==SETTINGS_CONFIRMATION)throw new Error('EXPLICIT_MARGIN_AND_LEVERAGE_CONFIRMATION_REQUIRED');if(this.busy||this.running||this.state?.pending||ownedPositions(this.state).length)throw new Error('FLAT_STOPPED_ACCOUNT_REQUIRED_FOR_SETTINGS');this.busy=true;

@@ -114,6 +114,7 @@ export class LiveEngine {
 
   async start(confirmation) {
     if (confirmation !== LIVE_CONFIRMATION) throw new Error('REAL_TRADING_CONFIRMATION_REQUIRED');
+    if (!this.guard()) throw new Error('LIVE_START_AUTHORIZATION_REQUIRED');
     if (!this.last?.accountChecked || this.now() < this.last.checkedAt || this.now() - this.last.checkedAt > 30000 || this.error || this.state?.pending) throw new Error('FRESH_READ_ONLY_CHECK_REQUIRED');
     this.client.arm(confirmation);
     this.running = true;

@@ -1,0 +1,72 @@
+{
+  "name": "adaptive-trading-bot-live-customer",
+  "productName": "Adaptive Trading Bot Live Customer",
+  "version": "0.3.1",
+  "private": true,
+  "description": "Whop-licensed local Binance Spot and perpetual Futures desktop workspace",
+  "homepage": "https://github.com/tianshuxiao497-a11y/fuckubaby",
+  "main": "src/main.cjs",
+  "author": {
+    "name": "Xiao Tianshu",
+    "email": "tianshuxiao497@gmail.com"
+  },
+  "license": "UNLICENSED",
+  "scripts": {
+    "dist": "electron-builder --publish never"
+  },
+  "devDependencies": {
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "com.adaptivetradingbot.live.customer",
+    "asar": true,
+    "directories": {
+      "output": "../../exports/live-customer-build-0.3.1"
+    },
+    "files": [
+      "src/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "stage/app-runtime",
+        "to": "app-runtime",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "artifactName": "AdaptiveTradingBot-Live-Customer-${version}-${os}-${arch}.${ext}",
+    "win": {
+      "target": [
+        "zip",
+        "nsis"
+      ],
+      "icon": "../adaptive-spot-desktop/app.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "shortcutName": "Adaptive Trading Bot Live Customer"
+    },
+    "mac": {
+      "target": [
+        "zip"
+      ],
+      "category": "public.app-category.finance",
+      "identity": null,
+      "icon": "../adaptive-spot-desktop/brand.png"
+    },
+    "linux": {
+      "target": [
+        "deb",
+        "tar.gz"
+      ],
+      "category": "Finance",
+      "icon": "../adaptive-spot-desktop/brand.png"
+    }
+  }
+}

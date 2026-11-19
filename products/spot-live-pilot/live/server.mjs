@@ -33,7 +33,8 @@ function safeError(error) {
   return /^[A-Z0-9_]+$/.test(error?.message ?? '') ? error.message : 'ACTION_FAILED_CHECK_LOCAL_CONFIGURATION';
 }
 
-export async function createLiveServer({ profile = defaultProfile(), port = 3012, clientFactory = credentials => new MainnetSpotClient(credentials), now = Date.now, pollMs = 5000, embeddingOrigin = null } = {}) {
+export async function createLiveServer({ profile = defaultProfile(), port = 3012, clientFactory = credentials => new MainnetSpotClient(credentials), now = Date.now, pollMs = 5000, embeddingOrigin = null, tradingAllowed = () => true } = {}) {
+  if (typeof tradingAllowed !== 'function') throw new Error('TRADING_AUTHORIZATION_REQUIRED');
   if(embeddingOrigin!==null){let url;try{url=new URL(embeddingOrigin);}catch{throw new Error('INVALID_WORKBENCH_ORIGIN');}if(url.protocol!=='http:'||url.hostname!=='127.0.0.1'||!url.port||url.origin!==embeddingOrigin)throw new Error('INVALID_WORKBENCH_ORIGIN');}
   if (!Number.isSafeInteger(pollMs) || pollMs < 20) throw new Error('INVALID_MONITOR_INTERVAL');
   const token = randomBytes(32).toString('hex');
@@ -52,7 +53,7 @@ export async function createLiveServer({ profile = defaultProfile(), port = 3012
     return {autoConnect: value.autoConnect};
   }
   let origin;
-  const status = () => ({ version: LIVE_VERSION, environment: 'BINANCE_SPOT_MAINNET', running: engine?.running ?? false,
+  const status = () => ({ version: LIVE_VERSION, environment: 'BINANCE_SPOT_MAINNET', tradingAuthorized: tradingAllowed() === true, running: engine?.running ?? false,
     connected: !!engine?.last?.accountChecked && !engine.error && now() >= engine.last.checkedAt && now() - engine.last.checkedAt <= 30000,
     unlocked: !!engine, vaultExists, settings, preferences, snapshot: engine?.last ?? null, error: engine?.error ?? null,
     pending: !!engine?.state?.pending, reconnecting: !!engine && preferences.autoConnect && reconnectFailures > 0,
@@ -66,7 +67,7 @@ export async function createLiveServer({ profile = defaultProfile(), port = 3012
     const candidateClient = clientFactory(data.credentials);
     if (engine) await engine.close();
     engine = null; credentials = null; settings = null; nextCheckAt = Infinity;
-    const candidate = new LiveEngine({ profile, client: candidateClient, settings: selected, now, guard: () => !closing });
+    const candidate = new LiveEngine({ profile, client: candidateClient, settings: selected, now, guard: () => !closing && tradingAllowed() === true });
     await candidate.acquire();
     engine = candidate;
     credentials = data.credentials;
@@ -128,6 +129,7 @@ export async function createLiveServer({ profile = defaultProfile(), port = 3012
         record('MANUAL_STOP');
         return reply(200, status());
       }
+      if (path === '/api/start' && tradingAllowed() !== true) return reply(403, {error: 'ACTIVE_LIVE_SUBSCRIPTION_REQUIRED'});
       if (actionBusy || engine?.busy) throw new Error('ANOTHER_ACTION_IN_PROGRESS');
       actionBusy = true;
       try {

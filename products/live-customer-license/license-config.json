@@ -1,0 +1,9 @@
+{
+  "endpoint": "https://adaptive-trading-live-license.xiaotianshu731.workers.dev/api/validate",
+  "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA8fQVNOOJQMYxUqnXFPRZxaKgo+09K+gDNtAo22HTc+s=\n-----END PUBLIC KEY-----\n",
+  "companyId": "biz_T2oKprzfka9h32",
+  "productId": "prod_uE9evmBcu4KKd",
+  "planIds": [
+    "plan_lRM36fnKDL9D9"
+  ]
+}
