@@ -14,6 +14,7 @@ native = root / f'exports/workbench-native-qa-{system}-{arch}'
 qa = json.loads((native / 'RESULT.json').read_text(encoding='utf-8'))
 assert qa['passed'] and qa['version'] == '0.3.0-personal' and qa['unconfiguredStartBlocked']
 assert qa['twoWorkspaces'] and qa['legs']['closeLong'] and qa['legs']['closeShort'] and qa['margin']['manualEnabled'] and qa['margin']['autoDisabled']
+assert qa['margin']['selectFontLoaded']
 assert qa['realAccountReads'] == qa['exchangeOrders'] == 0 and qa['uiFontLoaded']
 build = root / 'exports/live-workbench-build-0.3.0'
 docs = root / 'products/live-workbench'

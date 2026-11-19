@@ -4,3 +4,4 @@
 .badge{border-color:#7667b8;color:#ded5ff;background:#28213e}.allocation{display:grid;grid-template-columns:1fr 1fr;gap:8px}.allocation dt{color:#9daecc}.allocation dd{margin:0;text-align:right}select{width:100%;padding:13px;border:1px solid #344466;border-radius:10px;color:#dbe8fa;background:#10182b}hr{border:0;border-top:1px solid #2b3754;margin:22px 0}
 
 .leg-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.leg-card{padding:18px;border:1px solid #3b4b68;border-radius:10px;background:#101a2e}.leg-card p{overflow-wrap:anywhere}@media(max-width:940px){.leg-grid{grid-template-columns:1fr}}
+select,option{font:inherit}
