@@ -154,10 +154,10 @@ export class FuturesEngine{
       if(!this.allowExternal&&nonzero.length!==positions.filter(p=>p.market===market).length)throw new Error('UNMANAGED_OR_CHANGED_FUTURES_POSITION');
       const matched=new Set();
       for(const row of nonzero){
-        const {direction}=signedPosition(row);
+        const {direction,quantity}=signedPosition(row);
         if(this.allowExternal&&!validExchangeSymbol(row.symbol))throw new Error('UNIDENTIFIED_EXTERNAL_FUTURES_EXPOSURE');
         if(this.allowExternal&&!reserved(row.symbol)){
-          external.push({...row,market});summary.positions.push({market,symbol:row.symbol,direction});continue;
+          external.push({...row,market});summary.positions.push({market,symbol:row.symbol,direction,quantity});continue;
         }
         const position=positions.find(p=>p.market===market&&p.symbol===row.symbol&&p.direction===direction);
         if(!position&&this.allowExternal)throw new Error('MANUAL_POSITION_ON_SELECTED_CONTRACT');
@@ -422,6 +422,7 @@ export class FuturesEngine{
       const plan=Object.values(plans).find(p=>p.intent.startsWith('CLOSE_'))??Object.values(plans)[0]??null,primary=plan?.direction??ownedPositions(this.state)[0]?.direction??Object.keys(signals).find(d=>signals[d].intent)??'LONG';
       this.last={version:FUTURES_VERSION,environment:'BINANCE_FUTURES_MAINNET',checkedAt:now,localCheckedAt:this.now(),accountChecked:true,equityUsdt:equity,firstEquityUsdt:this.state.firstEquityUsdt,day,lossPercent:(1-Number(equity)/Number(day.baselineUsdt))*100,market,symbol,marginAsset:rules.marginAsset,configuration,actualConfigurationMatches,hedge:env.hedge,positionPolicy:this.settings.positionPolicy,feeRates:fees,leverageTiers:tiers,markPrice:mark.markPrice,fundingRate:mark.lastFundingRate??null,nextFundingTime:mark.nextFundingTime??null,liquidationPrice:configuration.legs[primary]?.liquidationPrice??null,positions:this.state.positions,protections:this.state.protections,position:this.state.position,protection:this.state.protection,pending:this.state.pending,hedgeLock:this.state.hedgeLock,signals,plans,sideBlockers:blockers,signal:signals[primary],plan,blocker:common??blockers[primary],wallets:env.wallets,collateralPrices:fx,book:{bid:book.bidPrice,ask:book.askPrice},candles:signals[primary].candles,orders:this.state.orders.slice(-50),marginEvents:this.state.marginEvents.slice(-50),realOrderCount:this.state.orders.length,running:this.running};
       this.last.externalExposure=this.externalExposure;
+      this.last.contractConstraints={minimumQuantity:rules.minimumQuantity,stepSize:rules.stepSize,minimumNotional:rules.minimumNotional,baseAsset:rules.baseAsset,quoteAsset:rules.quoteAsset,quantityUnit:market==='USD_M'?rules.baseAsset:'contracts'};
       if(day.baselineUsdt===null){this.last.lossPercent=null;this.last.blocker??=day.reason;}
       this.context={env,rules,book,fees,tiers,equity,fx,configuration};this.error=null;this.readFailure=null;
       const marginBalance=env.balances[market].find(row=>row.asset===rules.marginAsset),autoDecision=autoMarginDecision({policy:this.settings.externalMarginPolicy,state:this.state,snapshot:this.last,armed:this.autoMarginArmed,now,availableCollateral:marginBalance?.availableBalance??'0'});

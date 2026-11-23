@@ -1,10 +1,10 @@
-# Adaptive Trading Bot Live · 客户订阅版 0.3.5
+# Adaptive Trading Bot Live · 客户订阅版 0.3.6
 
 这是本机运行的真实资金软件，包含现货和 U 本位／币本位永续合约。请先完成只读检查，交易必须由你手动确认。没有收益保证，风险规则也不能保证最大亏损。
 
 ## 安装和软件许可证
 
-1. 完整解压与你的系统对应的 ZIP。Windows x64 运行 EXE 安装器；Ubuntu／Debian x64 使用系统包安装器安装 DEB（推荐终端 `sudo apt install ./AdaptiveTradingBot-Live-Customer-0.3.5-linux-amd64.deb`）；Mac 按 Apple 芯片 arm64 或 Intel x64 选择，把 Adaptive Trading Bot Live Customer.app 移入 Applications。
+1. 完整解压与你的系统对应的 ZIP。Windows x64 运行 EXE 安装器；Ubuntu／Debian x64 使用系统包安装器安装 DEB（推荐终端 `sudo apt install ./AdaptiveTradingBot-Live-Customer-0.3.6-linux-amd64.deb`）；Mac 按 Apple 芯片 arm64 或 Intel x64 选择，把 Adaptive Trading Bot Live Customer.app 移入 Applications。
 2. 本版与旧自用版、Testnet 使用不同的应用及配置目录，不会自动迁移或接管旧仓位。不要让两个机器人同时操作同一个交易账户。
 3. 使用购买这个实盘商品的 Whop 账号，打开订单和 Software，复制软件许可证：
    https://whop.com/adaptive-trading-bot-live/exp_1vOy7FcD1W5Xml/app/
@@ -48,6 +48,8 @@ Windows 与 Mac 版本未签名，Mac 未经 Apple 公证。请核对来源和�
 1. 解锁本机配置。在「账户与合约」为机器人选择一份独立合约。例如手动持有 U 本位 BTCUSDT，可把机器人设为 U 本位 ETHUSDT。让所选合约只保留本程序能够核对的仓位和委托，包括条件单。双向模式下，多空两边也都属于这份合约。
 2. 在「外部持仓」选择「允许其他合约持仓共存」，点「保存修改后的本机配置」。首次配置时使用「首次保存加密配置」。回到「合约总览」点「只读核对」。本程序只操作自己创建并核对的仓位，其他合约的仓位由你在币安管理。
 3. 查看本次核对返回的可用保证金。币安若允许某部分浮盈用于开仓，这部分已体现在可用额中。浮盈回落或新增挂单都会影响后续可用额。软件仍按每笔比例、费用和合约最小下单量检查，显示正的可用额也可能达不到最小订单。日内回撤仍按账户权益衡量，手动仓的盈亏也会影响当天能否继续开新仓。如果软件无法核实当天零点的权益，新增仓位会暂停。
+
+在「合约总览」展开「钱包与核对详情」，可逐项查看余额、可用保证金、本次初始保证金预算，以及所选合约的最小数量、数量步长和最低名义金额。三项下单限制都适用。其他合约的手动仓显示方向和数量，未成交的普通单和条件单会分别计数。
 
 ## 多空独立策略与手动锁仓
 

@@ -34,6 +34,8 @@ The default setting pauses on external positions. Existing configurations keep t
 2. Under **外部持仓** (external positions), choose **允许其他合约持仓共存** (allow positions on other contracts). Save the updated local configuration, or use the initial encrypted save on first setup. Go to **Workspace** and run the read-only check. The bot manages its own verified positions. You manage the other contracts on Binance.
 3. Check the available margin returned by Binance. Any unrealized profit Binance allows as collateral is already reflected in that figure. Available margin can fall if the profit shrinks or new orders reserve funds. The allocation percentage, fees and minimum order size still apply. The daily loss check uses account equity, so gains and losses on manual positions can affect the entry lock. New entries pause when the app cannot verify the start-of-day equity.
 
+In Workspace, expand Wallet and reconciliation details to view balances, available margin, the current initial-margin budget and the selected contract’s minimum quantity, quantity step and minimum notional. All three order filters apply. The position list shows each external contract’s side and quantity, with open regular and conditional orders counted separately.
+
 ## Trading and manual equal hedge
 
 After stopping, enter `START REAL FUTURES TRADING` again to restart monitoring. The strategy can wait for a signal. If a particular order is below the minimum, it skips that entry.

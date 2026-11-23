@@ -10,10 +10,17 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
 function element(){
   return {
     value:'',textContent:'',checked:false,disabled:false,hidden:false,
-    parentElement:{after(){}},listeners:{},
+    parentElement:{after(){}},listeners:{},children:[],dataset:{},
     addEventListener(name,fn){(this.listeners[name]??=[]).push(fn);},
     input(value){this.value=String(value);for(const fn of this.listeners.input??[])fn();},
-    setAttribute(){},replaceChildren(){},append(){},querySelector(){return {};},
+    setAttribute(){},replaceChildren(){},querySelector(){return {};},
+    append(node){this.insertBefore(node,null);},
+    insertBefore(node,next){
+      if(node.parent)node.remove();
+      const index=next?this.children.indexOf(next):this.children.length;
+      this.children.splice(index,0,node);node.parent=this;
+    },
+    remove(){this.parent.children.splice(this.parent.children.indexOf(this),1);this.parent=null;},
   };
 }
 
@@ -88,9 +95,9 @@ test('invalid local input and server errors are visible and the draft survives',
 
 test('stop then restart requires fresh confirmation; reverted edits do not keep arming disabled',async()=>{
   const {$,calls}=await fixture();
-  assert.match($('wallet-summary').textContent,/账户已核对 · 可用 3\.47571872 USDT/);
-  assert.doesNotMatch($('wallet-summary').textContent,/其他合约/);
-  assert.match($('wallet-details').textContent,/其他合约/);
+  assert.equal($('wallet-status').textContent,'账户已核对');
+  assert.equal($('wallet-available-brief').textContent,'3.4757 USDT');
+  assert.equal($('wallet-available').textContent,'3.47571872 USDT');
   assert.match(html,/<details><summary>钱包与核对详情/);
   $('percent').input('10');$('percent').input('1');
   $('confirmation').input('START REAL FUTURES TRADING');
@@ -103,6 +110,41 @@ test('stop then restart requires fresh confirmation; reverted edits do not keep 
   assert.equal($('start').disabled,false);
   $('start').onclick();await tick();
   assert.deepEqual(calls.filter(a=>a==='start'||a==='stop'),['start','stop','start']);
+});
+
+test('read-only wallet rows keep identity during updates and order counts stay separate from positions',async()=>{
+  const {$,state,refresh}=await fixture();
+  state.accountModes={multiAssets:true,hedge:false};
+  state.walletRead={time:1800000000000,market:'USD_M',amounts:[{asset:'USDT',balance:'5.1'},{asset:'BTC',balance:'0.000001'}]};
+  state.snapshot.equityUsdt='20';state.marginCapacity.poolEquityUsdt='10';
+  state.snapshot.contractConstraints={minimumQuantity:'0.001',stepSize:'0.001',minimumNotional:'5',quoteAsset:'USDT',quantityUnit:'BTC'};
+  state.externalExposure={positions:[{symbol:'NVDAUSDT',market:'USD_M',direction:'SHORT',quantity:'1.2'}],openOrderCount:2,conditionalOrderCount:3};
+  await refresh();
+  assert.equal($('wallet-asset-mode').textContent,'多资产');
+  assert.equal($('wallet-position-mode').textContent,'单向');
+  assert.equal($('wallet-budget').textContent,'0.10000000 USDT');
+  assert.equal($('wallet-min-quantity').textContent,'0.001 BTC');
+  assert.equal($('wallet-step-size').textContent,'0.001 BTC');
+  assert.equal($('wallet-min-notional').textContent,'5 USDT');
+  const position=$('wallet-positions').children[0], balance=$('wallet-balances').children[1];
+  assert.deepEqual(position.children.map(cell=>cell.textContent),['NVDAUSDT · U 本位','空','1.2']);
+  assert.equal($('wallet-open-orders').textContent,'2');assert.equal($('wallet-conditional-orders').textContent,'3');
+  assert.equal(balance.children[0].textContent,'5.10000000');
+  state.walletRead.amounts.reverse();
+  state.walletRead.amounts[1].balance='5.11';
+  state.externalExposure.positions[0].quantity='1.1';
+  state.snapshot.contractConstraints={minimumQuantity:'1',stepSize:'1',minimumNotional:'100',quoteAsset:'USD',quantityUnit:'contracts'};
+  await refresh();
+  assert.equal($('wallet-positions').children[0],position);assert.equal(position.children[2].textContent,'1.1');
+  assert.equal($('wallet-balances').children[1],balance);assert.equal(balance.children[0].textContent,'5.11000000');
+  assert.equal($('wallet-min-quantity').textContent,'1 张');
+  assert.equal($('wallet-step-size').textContent,'1 张');
+  assert.equal($('wallet-min-notional').textContent,'100 USD');
+  state.error='UNMANAGED_ORDER_ON_SELECTED_CONTRACT';state.externalExposure.positions=[];
+  await refresh();
+  assert.equal($('wallet-positions').children.length,0);
+  assert.equal($('wallet-status').textContent,'核对未通过');assert.equal($('wallet-alert').hidden,false);
+  assert.match($('wallet-alert').textContent,/所选合约有程序以外的委托/);
 });
 
 test('one opportunity below minimum waits while account-wide entry locks still block a flat start',async()=>{

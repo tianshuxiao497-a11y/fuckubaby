@@ -5,7 +5,30 @@
 
 .leg-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.leg-card{padding:18px;border:1px solid #3b4b68;border-radius:10px;background:#101a2e}.leg-card p{overflow-wrap:anywhere}@media(max-width:940px){.leg-grid{grid-template-columns:1fr}}
 select,option{font:inherit}
-.wallet-check{margin-top:12px;font-variant-numeric:tabular-nums}
-.wallet-check .signal{margin:0 0 6px}
+.wallet-check{margin-top:12px;min-width:0;font-variant-numeric:tabular-nums;container-type:inline-size}
+.wallet-check .signal{margin:0 0 6px;display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 6px;align-items:baseline}
+.wallet-available{text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wallet-available b{font-weight:500}
+.wallet-alert{font-size:12px;color:#f7c48d;overflow-wrap:anywhere;margin:6px 0}
 .wallet-check summary{cursor:pointer;color:#b5c6df}
+.wallet-fields{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:baseline;gap:6px 8px;font-size:12px;margin:10px 0}
+.wallet-fields dt{color:#a6b7d2}
+.wallet-fields dd{min-width:0;margin:0;text-align:right;overflow-wrap:anywhere;color:#e9effb}
+#wallet-balances{margin:0;padding:0;list-style:none}
+#wallet-balances li{display:flex;gap:0.45em;justify-content:flex-end;align-items:baseline;flex-wrap:wrap}
+#wallet-details h4{margin:14px 0 4px;font-size:12px}
+#wallet-external-count{color:#a6b7d2}
+#wallet-positions-table{table-layout:fixed;font-size:11px}
+#wallet-positions-table th,#wallet-positions-table td{padding:4px 2px;vertical-align:top}
+#wallet-positions-table th:first-child{width:50%}
+#wallet-positions-table th:nth-child(2){width:16%}
+#wallet-positions-table th:last-child,#wallet-positions-table td:last-child{text-align:right}
+#wallet-positions-table caption{text-align:left;color:#a6b7d2}
+#wallet-positions-empty{font-size:12px;margin:0}
+.wallet-orders{padding-top:8px;border-top:1px solid #2b3754}
+@container (max-width:250px){
+  .wallet-check .signal{grid-template-columns:minmax(0,1fr)}
+  .wallet-available{text-align:left}
+}
+html{scrollbar-gutter:stable}
 #start-help{min-height:1.6em;margin:5px 0}

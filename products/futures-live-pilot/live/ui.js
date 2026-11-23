@@ -86,7 +86,6 @@ function render(state){
 }
 function fillSettings(state){if(!state.settings)return;const s=state.settings;external=s.externalStrategy;externalMargin=s.externalMarginPolicy??null;for(const [id,value] of Object.entries({market:s.market,symbol:s.symbol,'asset-mode':s.assetMode??'single','margin-mode':s.marginMode,leverage:s.leverage,percent:s.marginPercent,direction:s.directionMode,'position-policy':s.positionPolicy??'single','external-position-policy':s.externalPositionPolicy??'block'}))$(id).value=value;$('auto-connect').checked=state.preferences.autoConnect;updateAssetModeForm();editing=false;}
 const saveFeedback=document.createElement('p');
-const checkFeedback=$('wallet-details');
 let checking=false,checkNotice='';
 const marketNames={USD_M:'U 本位',COIN_M:'币本位'};
 const queryNames={time:'服务器时间',balances:'钱包余额',account:'账户资料',accountConfig:'账户权限与模式',multiAssets:'保证金资产模式',positionMode:'单向或双向持仓模式',positions:'持仓',openOrders:'未成交委托',openAlgos:'未触发条件单',catalog:'合约目录',brackets:'杠杆档位',fees:'手续费',symbolConfig:'合约设置',income:'资金流水',mark:'标记价格',candles:'行情',book:'盘口'};
@@ -103,73 +102,90 @@ function capacityText(capacity){
   const value=num(capacity.availableUsdt,8);
   return '扣除持仓和挂单占用后的可用保证金'+(capacity.mode==='multi'?'（联合账户折合）':'')+'：'+value+' USDT';
 }
+const walletDecimals=new Map([4,8].map(digits=>[digits,new Intl.NumberFormat('en-US',{useGrouping:false,minimumFractionDigits:digits,maximumFractionDigits:digits})]));
+function walletMoney(value,digits=8){
+  if(value==null||value===''||!Number.isFinite(Number(value)))return '—';
+  const amount=Number(value),minimum=10**-digits;
+  if(amount>0&&amount<minimum)return '< '+walletDecimals.get(digits).format(minimum);
+  if(amount<0&&amount>-minimum)return '> -'+walletDecimals.get(digits).format(minimum);
+  return walletDecimals.get(digits).format(amount);
+}
+function setWalletText(node,value){if(node.textContent!==value)node.textContent=value;}
+function walletTime(timestamp){
+  if(!timestamp)return '—';
+  const date=new Date(timestamp);
+  if(!Number.isFinite(date.getTime()))return '—';
+  const pad=value=>String(value).padStart(2,'0');
+  return date.getFullYear()+'-'+pad(date.getMonth()+1)+'-'+pad(date.getDate())+' '+pad(date.getHours())+':'+pad(date.getMinutes())+':'+pad(date.getSeconds());
+}
+function walletRows(body,rows,rowTag,cellTag){
+  const existing=new Map(Array.from(body.children,node=>[node.dataset.key,node]));
+  rows.forEach(([key,values],index)=>{
+    let node=existing.get(key);
+    if(!node){
+      node=document.createElement(rowTag);
+      node.dataset.key=key;
+      for(const _ of values)node.append(document.createElement(cellTag));
+    }
+    values.forEach((value,i)=>setWalletText(node.children[i],value));
+    if(node!==body.children[index])body.insertBefore(node,body.children[index]??null);
+    existing.delete(key);
+  });
+  for(const node of existing.values())node.remove();
+}
 function renderCheck(state){
-  const wallet=state.walletRead;
-  const parts=[];
-  if(wallet){
-    const amount=wallet.amounts.map(row=>num(row.balance,12)+' '+row.asset).join('，');
-    parts.push('上次读取'+marketNames[wallet.market]+'钱包（'+when(wallet.time)+'） · '+(amount||'没有返回非零余额'));
-  }
-  const modes=state.accountModes;
-  if(modes){
-    const labels=[];
-    if(typeof modes.multiAssets==='boolean')labels.push(modes.multiAssets?'多资产保证金':'单资产保证金');
-    if(typeof modes.hedge==='boolean')labels.push(modes.hedge?'双向持仓':'单向持仓');
-    if(labels.length)parts.push('币安 U 本位账户 · '+labels.join(' / '));
-  }
-  if(state.settings?.externalPositionPolicy==='otherContracts'){
-    parts.push('已启用其他合约持仓共存。机器人只管理 '+marketNames[state.settings.market]+' '+state.settings.symbol+' 的程序仓位。');
-    const exposure=state.externalExposure;
-    if(exposure){
-      const positions=exposure.positions??[];
-      const labels=positions.slice(0,4).map(row=>{
-        const side=row.direction==='LONG'?'多仓':row.direction==='SHORT'?'空仓方向':'';
-        return [marketNames[row.market]??row.market,row.symbol,side].filter(Boolean).join(' ');
-      });
-      const more=positions.length>labels.length?' 等':'';
-      if(labels.length)parts.push('最近核对识别到 '+positions.length+' 个其他合约仓位（'+labels.join('、')+more+'），由你在币安管理。');
-      if(exposure.openOrderCount||exposure.conditionalOrderCount)parts.push('其他合约另有 '+exposure.openOrderCount+' 笔普通挂单、'+exposure.conditionalOrderCount+' 笔条件单。');
-    }
-  }
-  const capacity=state.marginCapacity;
-  if(capacity){
-    parts.push(capacityText(capacity));
-    const equity=state.connected?state.snapshot?.equityUsdt:null;
-    if(equity&&state.settings){
-      const sizingEquity=capacity.mode==='multi'?Math.min(Number(equity),Number(capacity.poolEquityUsdt)):Number(equity);
-      const budget=Math.min(Number(capacity.availableUsdt),Math.max(0,sizingEquity)*state.settings.marginPercent/100);
-      parts.push('本次初始保证金上限 '+num(budget,8)+' USDT，实际下单再预留费用并按合约步长向下取整');
-    }
-    if(capacity.eligible?.length>1)parts.push('可联合抵押的有余额资产：'+capacity.eligible.join('、')+'。是否共用由你选择。');
-    else if(capacity.mode==='single'&&wallet?.amounts.length===1&&wallet.amounts[0].asset==='USDT'&&Number(wallet.amounts[0].balance)>0)parts.push('目前钱包只持有 USDT，单资产即可交易 USDT 合约。');
-    if(state.settings?.market==='USD_M'&&state.settings.assetMode!==capacity.mode){
-      const labels={single:'单资产',multi:'多资产'};
-      parts.push('本机已保存「'+labels[state.settings.assetMode??'single']+'」，币安当前为「'+labels[capacity.mode]+'」。在「账户与合约」选择「'+labels[capacity.mode]+'」，点击「保存修改后的本机配置」，再做只读核对。');
-    }
-  }
-  if(!state.unlocked)parts.push(state.vaultExists?'请先在「账户与合约」解锁已有配置。':'请先在「账户与合约」保存加密配置。');
-  else if(checking||state.checking)parts.push('正在只读核对…');
-  else if(state.error){
+  const wallet=state.walletRead,modes=state.accountModes??{},capacity=state.marginCapacity,snapshot=state.snapshot,settings=state.settings;
+  const verified=state.connected&&snapshot,available=capacity?.availableUsdt;
+  const status=!state.unlocked?(state.vaultExists?'等待解锁':'等待配置'):state.error?'核对未通过':checking?'正在核对':verified?(snapshot.actualConfigurationMatches===false?'设置待应用':'账户已核对'):state.checking?'正在核对':'等待只读核对';
+  setWalletText($('wallet-status'),status);
+  setWalletText($('wallet-available-brief'),available==null?'—':walletMoney(available,4)+' USDT');
+  let alert=verified?'':checkNotice||'';
+  if(state.error){
     const issue=state.readFailure;
-    const reason=message(state.error);
-    if(issue){
-      const details=[marketNames[issue.market],queryNames[issue.operation]??issue.operation,reason];
-      if(issue.httpStatus)details.push('HTTP '+issue.httpStatus);
-      if(issue.binanceCode!==null)details.push('币安 '+issue.binanceCode);
-      parts.push(details.join(' · '));
-    }else parts.push('完整核对未通过 · '+reason);
-  }else if(checkNotice)parts.push(checkNotice);
-  else if(state.connected)parts.push(state.snapshot?.blocker?'账户已连接 · '+message(state.snapshot.blocker):'账户与合约核对已通过。');
-  else parts.push('点击「只读核对」读取合约钱包。');
-  const status=!state.unlocked?(state.vaultExists?'等待解锁':'等待首次配置'):checking||state.checking?'正在核对':state.error?'核对未通过':state.connected?'账户已核对':'等待只读核对';
-  const summary=[status];
-  if(capacity?.availableUsdt!=null)summary.push('可用 '+num(capacity.availableUsdt,8)+' USDT');
-  if(!state.error&&state.connected&&state.snapshot?.actualConfigurationMatches===false)summary.push('设置待应用');
-  if(state.error)summary.push('展开查看原因');
-  const brief=summary.join(' · ');
-  if($('wallet-summary').textContent!==brief)$('wallet-summary').textContent=brief;
-  const text=parts.join('　');
-  if(checkFeedback.textContent!==text)checkFeedback.textContent=text;
+    const label=issue?[marketNames[issue.market],queryNames[issue.operation]??issue.operation].filter(Boolean).join(' · '):'';
+    const code=issue?.binanceCode!=null?'币安 '+issue.binanceCode:issue?.httpStatus?'HTTP '+issue.httpStatus:'';
+    alert=[label,message(state.error),code].filter(Boolean).join(' · ');
+  }else if(settings?.market==='USD_M'&&capacity?.mode&&capacity.mode!==settings.assetMode){
+    alert='本机与币安的保证金资产模式不同，请到「账户与合约」核对。';
+  }else if(verified&&snapshot.actualConfigurationMatches===false){
+    alert='请核对本机目标和币安实际模式、杠杆。';
+  }
+  setWalletText($('wallet-alert'),alert);
+  $('wallet-alert').hidden=!alert;
+  setWalletText($('wallet-asset-mode'),typeof modes.multiAssets==='boolean'?(modes.multiAssets?'多资产':'单资产'):'—');
+  setWalletText($('wallet-position-mode'),typeof modes.hedge==='boolean'?(modes.hedge?'双向':'单向'):'—');
+  setWalletText($('wallet-read-time'),walletTime(wallet?.time));
+  setWalletText($('wallet-check-time'),walletTime(snapshot?.checkedAt));
+  const balances=(wallet?.amounts??[]).map(row=>[row.asset,[walletMoney(row.balance),row.asset]]).sort(([a],[b])=>a.localeCompare(b));
+  walletRows($('wallet-balances'),balances,'li','span');
+  $('wallet-balances-empty').hidden=balances.length>0;
+  setWalletText($('wallet-balances-empty'),wallet?'无非零余额':'—');
+  setWalletText($('wallet-available'),available==null?'—':walletMoney(available)+' USDT');
+  let budget=null;
+  if(verified&&settings&&available!=null&&snapshot.equityUsdt!=null){
+    const equity=Number(snapshot.equityUsdt);
+    const basis=capacity.mode==='multi'?Math.min(equity,Number(capacity.poolEquityUsdt)):equity;
+    const capped=Math.min(Number(available),Math.max(0,basis)*settings.marginPercent/100);
+    if(Number.isFinite(capped))budget=capped;
+  }
+  setWalletText($('wallet-budget'),budget==null?'—':walletMoney(budget)+' USDT');
+  const limits=snapshot?.contractConstraints;
+  const quantityUnit=limits?.quantityUnit==='contracts'?'张':limits?.quantityUnit;
+  setWalletText($('wallet-min-quantity'),limits?.minimumQuantity!=null&&quantityUnit?limits.minimumQuantity+' '+quantityUnit:'—');
+  setWalletText($('wallet-step-size'),limits?.stepSize!=null&&quantityUnit?limits.stepSize+' '+quantityUnit:'—');
+  setWalletText($('wallet-min-notional'),limits?.minimumNotional!=null&&limits.quoteAsset?limits.minimumNotional+' '+limits.quoteAsset:'—');
+  const exposure=state.externalExposure;
+  const positions=(exposure?.positions??[]).map(row=>[row.market+'|'+row.symbol+'|'+row.direction,[
+    row.symbol+' · '+(marketNames[row.market]??row.market),row.direction==='LONG'?'多':row.direction==='SHORT'?'空':'—',
+    row.quantity==null?'—':String(row.quantity)
+  ]]).sort(([a],[b])=>a.localeCompare(b));
+  walletRows($('wallet-positions'),positions,'tr','td');
+  setWalletText($('wallet-external-count'),exposure?String(positions.length):'—');
+  $('wallet-positions-table').hidden=!positions.length;
+  $('wallet-positions-empty').hidden=!!positions.length;
+  setWalletText($('wallet-positions-empty'),exposure?'无外部持仓':'尚未核对');
+  setWalletText($('wallet-open-orders'),String(exposure?.openOrderCount??'—'));
+  setWalletText($('wallet-conditional-orders'),String(exposure?.conditionalOrderCount??'—'));
 }
 saveFeedback.setAttribute('role','status');
 saveFeedback.hidden=true;
@@ -291,7 +307,7 @@ Object.assign(messages,{
   MULTI_ASSETS_REQUIRES_CROSS:'联合保证金模式需要全仓。',
   MARGIN_CAPACITY_UNVERIFIED:'未取得有效的可用保证金或账户权益，无法计算开仓额度。',
   MARGIN_CONVERSION_INDEX_UNVERIFIED:'用于折算保证金的币安指数缺失或过期，请重新只读核对。',
-  MARGIN_BUDGET_BELOW_CONTRACT_MINIMUM_OR_FILTER:'按所选比例和当前可用保证金计算的仓位未达到合约最小数量或金额。',
+  MARGIN_BUDGET_BELOW_CONTRACT_MINIMUM_OR_FILTER:'本次预算不足以满足币安最小下单数量或金额。可在钱包详情查看所选合约的限制。',
   USD_M_ASSET_MODE_UNVERIFIED:'币安尚未返回可确认的资产模式，策略保持停止。',
   USD_M_POSITION_MODE_UNVERIFIED:'币安尚未返回可确认的单向或双向持仓模式。',
   FUTURES_QUERY_REJECTED:'币安拒绝了这项查询',

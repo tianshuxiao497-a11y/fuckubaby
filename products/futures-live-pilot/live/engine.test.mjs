@@ -89,6 +89,22 @@ for(const market of ['USD_M','COIN_M'])for(const direction of ['LONG','SHORT'])t
   assert.equal(f.engine.state.position.direction,direction);assert.ok(f.engine.state.protection);assert.equal(f.engine.state.orders.length,1);
   f.forceClose();await f.engine.check({execute:true});assert.equal(f.engine.state.position,null);assert.equal(f.engine.state.protection,null);assert.equal(f.engine.state.orders.length,2);
 });
+for(const market of ['USD_M','COIN_M'])test(market+' read-only workspace exposes contract limits and the magnitude of a manual short',async t=>{
+  const {engine,clients,calls,settings}=await fixture(t,{market});
+  engine.settings=validateSettings({...settings,externalPositionPolicy:'otherContracts'});
+  const usd=market==='USD_M',symbol=usd?'ETHUSDT':'ETHUSD_PERP',quantity=usd?'0.25':'3';
+  const client=clients[market],request=client.request.bind(client);
+  client.request=async(name,args)=>{
+    const value=await request(name,args);
+    if(name==='positions')value.push({symbol,positionSide:'BOTH',positionAmt:'-'+quantity,entryPrice:'1200',updateTime:initialTime-1000});
+    return value;
+  };
+  const snapshot=await engine.check();
+  assert.deepEqual(snapshot.contractConstraints,{minimumQuantity:usd?'0.001':'1',stepSize:usd?'0.001':'1',minimumNotional:usd?'5':'0',
+    baseAsset:'BTC',quoteAsset:usd?'USDT':'USD',quantityUnit:usd?'BTC':'contracts'});
+  assert.deepEqual(snapshot.externalExposure.positions,[{market,symbol,direction:'SHORT',quantity}]);
+  assert.equal(calls.some(({name})=>['newOrder','newProtection','setMargin','setLeverage'].includes(name)),false);
+});
 test('manual stop immediately updates the snapshot; a confirmed restart keeps an existing stop and never duplicates the entry',async t=>{
   const f=await fixture(t);await f.engine.start(FUTURES_CONFIRMATION);await f.engine.check({execute:true});
   const stopId=f.engine.state.protection.id;
