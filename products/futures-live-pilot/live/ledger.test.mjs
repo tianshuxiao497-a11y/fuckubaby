@@ -3,6 +3,18 @@ import assert from 'node:assert/strict';
 import {newLedger,applyFinalOrder,nativeWalletsAt,addFunding,verifyWallets,accountIdentity,walletSnapshot} from './ledger.mjs';
 const at=1800000000000,id='asbf_'+'a'.repeat(28);
 const initial=()=>newLedger('a'.repeat(64),{'USD_M.USDT':'1000','COIN_M.BTC':'0.1'},at-10000);
+test('a one-character settlement asset is preserved in wallet reconciliation and funding',()=>{
+  const row={asset:'U',walletBalance:'2.5'};
+  const accounts={USD_M:{canTrade:true,assets:[row]},COIN_M:{canTrade:true,assets:[]}};
+  const wallets=walletSnapshot(accounts);
+  const state=newLedger('a'.repeat(64),wallets,at);
+  const funded=addFunding(state,'USD_M',[{incomeType:'FUNDING_FEE',asset:'U',income:'-0.1',time:at+1,tranId:17}],at+2);
+  verifyWallets(funded,{'USD_M.U':'2.4'});
+  for(const invalid of ['', 'U.USDT', 'u', 'U/USDT']){
+    row.asset=invalid;
+    assert.throws(()=>walletSnapshot(accounts),/INVALID_SETTLEMENT_ASSET/);
+  }
+});
 function pending(state,{market='USD_M',direction='LONG',close=false,quantity='0.01',price='10000'}={}){
   const symbol=market==='USD_M'?'BTCUSDT':'BTCUSD_PERP';
   state.pending={kind:'ORDER',id,createdAt:at-100,market,direction,intent:(close?'CLOSE_':'OPEN_')+direction,risk:{stopLossPercent:1,takeProfitPercent:2,trailingPercent:0.5},rules:{marginAsset:market==='USD_M'?'USDT':'BTC',contractSize:market==='USD_M'?'1':'100'},args:{symbol,positionSide:'BOTH',side:direction==='LONG'?(close?'SELL':'BUY'):(close?'BUY':'SELL'),type:'LIMIT',timeInForce:'IOC',quantity,price}};

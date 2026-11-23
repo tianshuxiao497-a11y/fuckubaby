@@ -1,4 +1,4 @@
-name: Live Customer Trading Desktop 0.3.2 native offline acceptance
+name: Live Customer Trading Desktop 0.3.3 native offline acceptance
 on:
   push:
     branches: [codex/live-customer-031]
@@ -52,24 +52,24 @@ jobs:
       - name: Enable Chromium sandbox in the disposable Linux runner
         if: runner.os == 'Linux'
         run: |
-          sudo chown root:root "exports/live-customer-build-0.3.2/linux-unpacked/chrome-sandbox"
-          sudo chmod 4755 "exports/live-customer-build-0.3.2/linux-unpacked/chrome-sandbox"
+          sudo chown root:root "exports/live-customer-build-0.3.3/linux-unpacked/chrome-sandbox"
+          sudo chmod 4755 "exports/live-customer-build-0.3.3/linux-unpacked/chrome-sandbox"
       - name: Test packaged Windows app without credentials
         if: runner.os == 'Windows'
-        run: node scripts/native-live-customer-smoke.mjs "exports/live-customer-build-0.3.2/win-unpacked/Adaptive Trading Bot Live Customer.exe" "exports/live-customer-native-qa-Windows-x64"
+        run: node scripts/native-live-customer-smoke.mjs "exports/live-customer-build-0.3.3/win-unpacked/Adaptive Trading Bot Live Customer.exe" "exports/live-customer-native-qa-Windows-x64"
       - name: Test packaged Linux app without credentials
         if: runner.os == 'Linux'
-        run: xvfb-run -a node scripts/native-live-customer-smoke.mjs "exports/live-customer-build-0.3.2/linux-unpacked/adaptive-trading-bot-live-customer" "exports/live-customer-native-qa-Linux-x64"
+        run: xvfb-run -a node scripts/native-live-customer-smoke.mjs "exports/live-customer-build-0.3.3/linux-unpacked/adaptive-trading-bot-live-customer" "exports/live-customer-native-qa-Linux-x64"
       - name: Test packaged Mac app without credentials
         if: runner.os == 'macOS'
-        run: node scripts/native-live-customer-smoke.mjs "exports/live-customer-build-0.3.2/mac${{ matrix.arch == 'arm64' && '-arm64' || '' }}/Adaptive Trading Bot Live Customer.app/Contents/MacOS/Adaptive Trading Bot Live Customer" "exports/live-customer-native-qa-Mac-${{ matrix.arch }}"
+        run: node scripts/native-live-customer-smoke.mjs "exports/live-customer-build-0.3.3/mac${{ matrix.arch == 'arm64' && '-arm64' || '' }}/Adaptive Trading Bot Live Customer.app/Contents/MacOS/Adaptive Trading Bot Live Customer" "exports/live-customer-native-qa-Mac-${{ matrix.arch }}"
       - name: Build native installer and distributable
         working-directory: products/adaptive-live-customer-desktop
         run: npx electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never
       - name: Test installed Debian package in the disposable runner
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y ./exports/live-customer-build-0.3.2/*.deb
+          sudo apt-get install -y ./exports/live-customer-build-0.3.3/*.deb
           xvfb-run -a node scripts/native-live-customer-smoke.mjs "/usr/bin/adaptive-trading-bot-live-customer" "exports/live-customer-native-qa-Linux-installed-x64"
       - name: Package native app with Chinese and English guides
         run: python scripts/package-live-customer-desktop.py
@@ -86,13 +86,13 @@ jobs:
         with:
           name: live-customer-desktop-031-${{ matrix.os }}-${{ matrix.arch }}
           path: |
-            exports/AdaptiveTradingBot-Live-0.3.2/*.zip
-            exports/AdaptiveTradingBot-Live-0.3.2/RESULT-*.json
+            exports/AdaptiveTradingBot-Live-0.3.3/*.zip
+            exports/AdaptiveTradingBot-Live-0.3.3/RESULT-*.json
           retention-days: 7
 
   release:
     needs: native
-    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[publish customer 0.3.2]')
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[publish customer 0.3.3]')
     runs-on: ubuntu-24.04
     permissions:
       actions: read

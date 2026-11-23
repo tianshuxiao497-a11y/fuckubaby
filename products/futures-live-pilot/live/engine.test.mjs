@@ -102,6 +102,30 @@ test('five USDT and the USD-M V3 account response pass read-only checks; missing
   assert.equal(calls.some(call=>call.name==='newOrder'),false);
   assert.equal(engine.running,false);
 });
+test('read-only BTCUSDT reconciliation includes a zero-balance U asset and keeps the saved mode separate',async t=>{
+  const {engine,clients,calls,settings}=await fixture(t,{usdBalance:'7.39859088'});
+  const usd=clients.USD_M,request=usd.request.bind(usd);
+  usd.request=async(name,args)=>{
+    if(name==='accountConfig')return {canTrade:true,multiAssetsMargin:true,dualSidePosition:false};
+    if(name==='marginIndex')return {symbol:'USDTUSD',index:'1',time:usd.serverNow()};
+    const result=await request(name,args);
+    if(name==='account'){
+      result.assets.push({asset:'U',walletBalance:'0.00000000',unrealizedProfit:'0.00000000'});
+      return {...result,totalMarginBalance:'7.39859088',availableBalance:'0.52087928'};
+    }
+    if(name==='symbolConfig')return result.map(row=>({...row,marginType:'CROSSED'}));
+    return result;
+  };
+  assert.equal((await engine.check()).blocker,'ASSET_MODE_PREFERENCE_MISMATCH');
+  engine.settings=validateSettings({...settings,assetMode:'multi',marginMode:'CROSSED'});
+  const snapshot=await engine.check();
+  assert.equal(snapshot.accountChecked,true);
+  assert.equal(snapshot.actualConfigurationMatches,true);
+  assert.equal(snapshot.equityUsdt,'7.39859088');
+  assert.equal(snapshot.wallets['USD_M.U'],'0.00000000');
+  assert.equal(engine.marginCapacity.availableUsdt,'0.52087928');
+  assert.equal(calls.some(c=>c.name==='newOrder'||c.name.startsWith('set')||c.args?.symbol==='UUSDT'),false);
+});
 test('USD-M asset and position modes are verified independently without changing the exchange',async t=>{
   const {engine,clients}=await fixture(t,{usdBalance:'5.11000047'});
   const request=clients.USD_M.request.bind(clients.USD_M),queries=[];

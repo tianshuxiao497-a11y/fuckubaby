@@ -1,10 +1,10 @@
-# Adaptive Trading Bot Live · Customer subscription edition 0.3.2
+# Adaptive Trading Bot Live · Customer subscription edition 0.3.3
 
 A local real-money workspace for Binance Spot and USD-M/COIN-M perpetual futures. Account checks are read-only. Trading needs your explicit manual confirmation. There are no promised returns or guaranteed loss limits.
 
 ## Installation and Whop license
 
-Extract the full ZIP. Windows x64: run the included EXE installer. Ubuntu/Debian x64: install the DEB using the package manager; `sudo apt install ./AdaptiveTradingBot-Live-Customer-0.3.2-linux-amd64.deb` resolves dependencies. On the matching Apple Silicon or Intel Mac, move Adaptive Trading Bot Live Customer.app to Applications.
+Extract the full ZIP. Windows x64: run the included EXE installer. Ubuntu/Debian x64: install the DEB using the package manager; `sudo apt install ./AdaptiveTradingBot-Live-Customer-0.3.3-linux-amd64.deb` resolves dependencies. On the matching Apple Silicon or Intel Mac, move Adaptive Trading Bot Live Customer.app to Applications.
 
 This edition has its own application and data profiles. It does not adopt the old personal or Testnet installation or positions. Do not run multiple bots against the same account concurrently.
 

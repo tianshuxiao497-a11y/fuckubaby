@@ -10,7 +10,7 @@ export const ownOrderId=value=>typeof value==='string'&&/^asbf_[a-f0-9]{28}$/.te
 export const ownAlgoId=value=>typeof value==='string'&&/^asbp_[a-f0-9]{28}$/.test(value);
 export const ownMarginId=value=>typeof value==='string'&&/^asbm_[a-f0-9]{28}$/.test(value);
 const positive=value=>typeof value==='string'&&/^\d{1,18}(\.\d{1,12})?$/.test(value)&&Number(value)>0;
-const asset=value=>typeof value==='string'&&/^[A-Z0-9]{2,24}$/.test(value);
+
 function routes(market){
   const prefix=market==='USD_M'?'/fapi':'/dapi';
   return new Map([
@@ -90,7 +90,7 @@ export class FuturesClient{
     const [method,path,,signed,publicOrigin]=route;
     if(name==='marginIndex'){
       if(!['USDTUSD','USDCUSD'].includes(parameters.symbol))throw new Error('INVALID_STABLECOIN_INDEX');
-    }else if(parameters.symbol!==undefined){if(publicOrigin){if(!/^[A-Z0-9]{2,24}USDT$/.test(parameters.symbol))throw new Error('INVALID_COLLATERAL_PRICE_SYMBOL');}else contractSymbol(parameters.symbol);}
+    }else if(parameters.symbol!==undefined){if(publicOrigin){if(!/^[A-Z0-9]{1,24}USDT$/.test(parameters.symbol))throw new Error('INVALID_COLLATERAL_PRICE_SYMBOL');}else contractSymbol(parameters.symbol);}
     if(['book','mark','fees','brackets','newOrder','newProtection','setMargin','setLeverage','order','trades','addMargin','marginHistory'].includes(name)&&!parameters.symbol)throw new Error('EXPLICIT_CONTRACT_REQUIRED');
     if(name.endsWith('Candles')||name==='candles'){
       if(parameters.interval!=='1m'||!Number.isSafeInteger(parameters.limit)||parameters.limit<1||parameters.limit>120)throw new Error('BOUNDED_MINUTE_CANDLES_REQUIRED');

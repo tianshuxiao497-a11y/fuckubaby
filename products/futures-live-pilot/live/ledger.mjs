@@ -3,8 +3,8 @@ import {units,signedUnits,decimal,absolute,SCALE} from './math.mjs';
 import {contractSymbol} from './market.mjs';
 import {ownOrderId,ownAlgoId,ownMarginId} from './client.mjs';
 const hash=value=>createHash('sha256').update(value).digest('hex');
-const asset=value=>typeof value==='string'&&/^[A-Z0-9]{2,24}$/.test(value);
-const walletKey=value=>/^(USD_M|COIN_M)\.[A-Z0-9]{2,24}$/.test(value);
+const asset=value=>typeof value==='string'&&/^[A-Z0-9]{1,24}$/.test(value);
+const walletKey=value=>/^(USD_M|COIN_M)\.[A-Z0-9]{1,24}$/.test(value);
 const moment=value=>Number.isSafeInteger(value)&&value>0;
 export function accountIdentity(balances){
   const names=[];

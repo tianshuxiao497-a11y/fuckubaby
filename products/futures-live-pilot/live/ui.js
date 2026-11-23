@@ -80,8 +80,11 @@ function renderCheck(state){
       parts.push('本次初始保证金上限 '+num(budget,8)+' USDT，实际下单再预留费用并按合约步长向下取整');
     }
     if(capacity.eligible?.length>1)parts.push('可联合抵押的有余额资产：'+capacity.eligible.join('、')+'。是否共用由你选择。');
-    else if(wallet?.amounts.length===1&&wallet.amounts[0].asset==='USDT'&&Number(wallet.amounts[0].balance)>0)parts.push('目前钱包只持有 USDT，单资产即可交易 USDT 合约。');
-    if(state.settings?.assetMode&&state.settings.assetMode!==capacity.mode)parts.push(message('ASSET_MODE_PREFERENCE_MISMATCH'));
+    else if(capacity.mode==='single'&&wallet?.amounts.length===1&&wallet.amounts[0].asset==='USDT'&&Number(wallet.amounts[0].balance)>0)parts.push('目前钱包只持有 USDT，单资产即可交易 USDT 合约。');
+    if(state.settings?.market==='USD_M'&&state.settings.assetMode!==capacity.mode){
+      const labels={single:'单资产',multi:'多资产'};
+      parts.push('本机已保存「'+labels[state.settings.assetMode??'single']+'」，币安当前为「'+labels[capacity.mode]+'」。在「账户与合约」选择「'+labels[capacity.mode]+'」，点击「保存修改后的本机配置」，再做只读核对。');
+    }
   }
   if(!state.unlocked)parts.push(state.vaultExists?'请先在「账户与合约」解锁已有配置。':'请先在「账户与合约」保存加密配置。');
   else if(checking||state.checking)parts.push('正在只读核对…');
@@ -131,7 +134,7 @@ async function act(name,body={},after){
   }catch(error){
     actionNotice=message(error.message);
     $('notice').textContent=actionNotice;
-    if(saving)reportSave(actionNotice);
+    if(saving||name==='settings')reportSave(actionNotice);
     if(name==='check'){
       checkNotice=actionNotice;
       try{render(await api('status'));}catch{checkNotice='本机合约服务未响应，请重新打开软件。';}
@@ -155,7 +158,12 @@ $('catalog').onclick=()=>act('catalog',{market:$('market').value},value=>{$('sym
 $('save').onclick=()=>act('save',{...savedForm(),passwordRepeat:$('password-repeat').value,credentials:formCredentials()},()=>{$('key').value='';$('secret').value='';$('pem').value='';privatePem='';showTab('workspace');});
 $('unlock').onclick=()=>act('unlock',{password:$('password').value},()=>showTab('workspace'));
 $('lock').onclick=()=>act('lock',{},()=>{$('password').value='';$('password-repeat').value='';privatePem='';$('pem').value='';$('public-key').hidden=true;});
-$('apply-settings').onclick=()=>act('settings',savedForm());
+$('apply-settings').onclick=()=>act('settings',savedForm(),state=>{
+  const label=state.settings.assetMode==='multi'?'多资产':'单资产';
+  actionNotice=state.settings.market==='USD_M'?'本机已保存「'+label+'」。请回到合约总览做只读核对。':'本机合约配置已保存。';
+  reportSave(actionNotice);
+  $('notice').textContent=actionNotice;
+});
 $('contract-settings').onclick=()=>act('contract-settings',{confirmation:$('settings-confirmation').value},()=>{$('settings-confirmation').value='';});
 $('start').onclick=()=>{if(editing){$('notice').textContent='配置表有未保存修改，请先保存本机配置并只读核对。';return;}act('start',{confirmation:$('confirmation').value},()=>{$('confirmation').value='';});};
 $('stop').onclick=async()=>{try{render(await api('stop',{}));}catch(error){$('notice').textContent=message(error.message);}};
@@ -168,6 +176,7 @@ $('history').onclick=()=>download('history','AdaptiveFuturesBot-Orders.csv');$('
 async function refresh(){if(busy)return;try{const state=await api('status');render(state);}catch{$('connection-state').textContent='本机服务未连接';$('start').disabled=true;$('close-position').disabled=true;}}
 
 Object.assign(messages,{
+  INVALID_SETTLEMENT_ASSET:'交易所钱包返回了当前版本无法识别的资产代码，完整核对已停止。',
   INVALID_USD_M_ASSET_MODE:'请选择单资产或多资产。',
   ASSET_MODE_PREFERENCE_MISMATCH:'本机所选资产模式与币安不同。请到账户与合约核对选择并保存。',
   MULTI_ASSETS_REQUIRES_CROSS:'联合保证金模式需要全仓。',

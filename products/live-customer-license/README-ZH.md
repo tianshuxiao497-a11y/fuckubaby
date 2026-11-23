@@ -1,10 +1,10 @@
-# Adaptive Trading Bot Live · 客户订阅版 0.3.2
+# Adaptive Trading Bot Live · 客户订阅版 0.3.3
 
 这是本机运行的真实资金软件，包含现货和 U 本位／币本位永续合约。请先完成只读检查，交易必须由你手动确认。没有收益保证，风险规则也不能保证最大亏损。
 
 ## 安装和软件许可证
 
-1. 完整解压与你的系统对应的 ZIP。Windows x64 运行 EXE 安装器；Ubuntu／Debian x64 使用系统包安装器安装 DEB（推荐终端 `sudo apt install ./AdaptiveTradingBot-Live-Customer-0.3.2-linux-amd64.deb`）；Mac 按 Apple 芯片 arm64 或 Intel x64 选择，把 Adaptive Trading Bot Live Customer.app 移入 Applications。
+1. 完整解压与你的系统对应的 ZIP。Windows x64 运行 EXE 安装器；Ubuntu／Debian x64 使用系统包安装器安装 DEB（推荐终端 `sudo apt install ./AdaptiveTradingBot-Live-Customer-0.3.3-linux-amd64.deb`）；Mac 按 Apple 芯片 arm64 或 Intel x64 选择，把 Adaptive Trading Bot Live Customer.app 移入 Applications。
 2. 本版与旧自用版、Testnet 使用不同的应用及配置目录，不会自动迁移或接管旧仓位。不要让两个机器人同时操作同一个交易账户。
 3. 使用购买这个实盘商品的 Whop 账号，打开订单和 Software，复制软件许可证：
    https://whop.com/adaptive-trading-bot-live/exp_1vOy7FcD1W5Xml/app/

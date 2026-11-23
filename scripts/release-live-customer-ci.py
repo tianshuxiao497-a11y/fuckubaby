@@ -16,7 +16,7 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-version = "0.3.2"
+version = "0.3.3"
 tag = f"v{version}-live-customer"
 repo = os.environ["GITHUB_REPOSITORY"]
 commit = os.environ["GITHUB_SHA"]
@@ -65,7 +65,7 @@ if existing:
 else:
     gh("release", "create", tag, "--target", commit, "--draft", "--prerelease", "--title",
        f"Adaptive Trading Bot Live {version}", "--notes",
-       "USD-M single-asset and multi-assets support, available margin in USDT equivalent, and updated English and Chinese guides. Windows, Linux and both Mac builds passed native checks with simulated accounts.")
+       "Fix USD-M wallet reconciliation for single-character asset codes and clarify saved vs exchange asset mode. Windows, Linux and both Mac builds passed native checks with simulated accounts.")
 release_id = gh("release", "view", tag, "--json", "databaseId", "--jq", ".databaseId")
 def assets():
     return {a["name"]: a for a in json.loads(gh("api", f"repos/{repo}/releases/{release_id}/assets"))}

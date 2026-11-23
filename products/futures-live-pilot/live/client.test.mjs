@@ -76,6 +76,9 @@ test('protection uses Algo STOP_MARKET and only a closing direction with an expl
 test('public collateral valuation sends no trading key to the Spot origin',async()=>{
   const f=fixture();await f.client.request('collateralPrice',{symbol:'BTCUSDT'});const call=f.calls.at(-1);
   assert.equal(call.url.origin,'https://api.binance.com');assert.equal(call.options.headers['X-MBX-APIKEY'],undefined);
+  await f.client.request('collateralPrice',{symbol:'UUSDT'});
+  assert.equal(f.calls.at(-1).url.searchParams.get('symbol'),'UUSDT');
+  await assert.rejects(f.client.request('collateralPrice',{symbol:'USDT'}),/INVALID_COLLATERAL_PRICE_SYMBOL/);
 });
 test('timeout and rate refusal stop writes without resubmitting an order',async()=>{
   let posts=0;const f=fixture({reply:(url,options)=>{if(options.method==='POST'){posts++;throw new Error('network');}}});
