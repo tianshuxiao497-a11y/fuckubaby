@@ -2,14 +2,14 @@
 const $=id=>document.getElementById(id),token=location.hash.slice(1);history.replaceState(null,'',location.pathname);
 let current=null,privatePem='',external=null,externalMargin=null,hedgePreview=null,actionNotice=null,busy=false,editing=false;
 const titles={workspace:'合约总览 / Workspace',setup:'账户与合约 / Connection & risk',edition:'版本与授权 / Edition',logs:'运行记录 / Activity',help:'使用说明 / Help'};
-const messages={EXPLICIT_FUTURES_START_REQUIRED:'请完整输入 START REAL FUTURES TRADING。',EXPLICIT_MARGIN_AND_LEVERAGE_CONFIRMATION_REQUIRED:'请完整输入 APPLY FUTURES SETTINGS。',SAVE_OR_UNLOCK_FUTURES_CONFIGURATION:'请先保存或解锁本机配置。',MATCHING_FUTURES_VAULT_PASSWORDS_REQUIRED:'首次保存的两次密码须一致，且至少 12 字符。',DAILY_USDT_EQUITY_LOSS_20_PERCENT:'当日回撤超过 20%，当天停止新增仓位。',CONTRACT_MARGIN_OR_LEVERAGE_SETTINGS_DIFFER:'本机选择与币安实际保证金模式或杠杆不同，请先空仓核对后应用。',APPLY_SELECTED_CONTRACT_SETTINGS_FIRST:'请先核对并应用所选的保证金模式和杠杆。',FLAT_STOPPED_RECONCILED_FUTURES_PROFILE_REQUIRED:'请先停止策略，确认空仓且没有待核对的委托。',UNMANAGED_OR_CHANGED_FUTURES_POSITION:'发现其他持仓或仓位变化，已停止。请先到币安核对。',FUTURES_POSITION_DIFFERS_FROM_OWNED_LEDGER:'币安持仓与本机记录不一致。请到币安核对，保留本机记录。',EXCHANGE_PROTECTION_QUERY_UNAVAILABLE:'当前账户的条件止损查询未通过；保持停止，不能开仓。',EXCHANGE_PROTECTION_QUERY_NOT_VERIFIED:'无法确认交易所止损查询能力，不能开仓。',FUTURES_WALLET_DIFFERS_FROM_LEDGER:'钱包变化与本程序账本不一致，请核对外部交易、转账和费用。',FUTURES_READ_ONLY_RECONNECT_WAIT:'连接中断，正在只读重试；不会自动恢复交易。',CLOSED_POSITION_REENTRY_COOLDOWN:'平仓后等待至少一分钟再开新仓。',HOURLY_FUTURES_ENTRY_LIMIT:'已达到每小时六次新开仓的限制。',ISOLATED_AUTO_ADD_MARGIN_MUST_BE_DISABLED:'请先在币安关闭本合约的逐仓自动追加保证金。',FUTURES_ACTION_IN_PROGRESS:'正在处理上一项操作，请稍候。',STANDARD_SINGLE_ASSET_FUTURES_MODE_REQUIRED:'请核对币安标准合约账户的资产模式。'};
+const messages={EXPLICIT_FUTURES_START_REQUIRED:'请完整输入 START REAL FUTURES TRADING。',EXPLICIT_MARGIN_AND_LEVERAGE_CONFIRMATION_REQUIRED:'请完整输入 APPLY FUTURES SETTINGS。',SAVE_OR_UNLOCK_FUTURES_CONFIGURATION:'请先保存或解锁本机配置。',MATCHING_FUTURES_VAULT_PASSWORDS_REQUIRED:'首次保存的两次密码须一致，且至少 12 字符。',DAILY_USDT_EQUITY_LOSS_20_PERCENT:'当日回撤超过 20%，当天停止新增仓位。',CONTRACT_MARGIN_OR_LEVERAGE_SETTINGS_DIFFER:'本机选择与币安实际保证金模式或杠杆不同，请先空仓核对后应用。',APPLY_SELECTED_CONTRACT_SETTINGS_FIRST:'请先核对并应用所选的保证金模式和杠杆。',FLAT_STOPPED_RECONCILED_FUTURES_PROFILE_REQUIRED:'请先停止策略，确认空仓且没有待核对的委托。',UNMANAGED_OR_CHANGED_FUTURES_POSITION:'发现外部持仓或仓位变化。若要保留其他合约的手动仓，请在「账户与合约」选择其他合约并开启持仓共存。程序仓位数量有变化时，请先到币安核对。',FUTURES_POSITION_DIFFERS_FROM_OWNED_LEDGER:'币安持仓与本机记录不一致。请到币安核对，保留本机记录。',EXCHANGE_PROTECTION_QUERY_UNAVAILABLE:'当前账户的条件止损查询未通过；保持停止，不能开仓。',EXCHANGE_PROTECTION_QUERY_NOT_VERIFIED:'无法确认交易所止损查询能力，不能开仓。',FUTURES_WALLET_DIFFERS_FROM_LEDGER:'钱包变化与本程序账本不一致，请核对外部交易、转账和费用。',FUTURES_READ_ONLY_RECONNECT_WAIT:'连接中断，正在只读重试；不会自动恢复交易。',CLOSED_POSITION_REENTRY_COOLDOWN:'平仓后等待至少一分钟再开新仓。',HOURLY_FUTURES_ENTRY_LIMIT:'已达到每小时六次新开仓的限制。',ISOLATED_AUTO_ADD_MARGIN_MUST_BE_DISABLED:'请先在币安关闭本合约的逐仓自动追加保证金。',FUTURES_ACTION_IN_PROGRESS:'正在处理上一项操作，请稍候。',STANDARD_SINGLE_ASSET_FUTURES_MODE_REQUIRED:'请核对币安标准合约账户的资产模式。'};
 const message=code=>messages[code]??code??'—';
 const num=(value,digits=4)=>value===null||value===undefined?'—':Number(value).toLocaleString(undefined,{maximumFractionDigits:digits});
 const when=value=>value?new Date(value).toLocaleString(): '—';
 function showTab(tab){document.querySelectorAll('[data-view]').forEach(node=>{node.hidden=node.dataset.view!==tab;});document.querySelectorAll('[data-tab]').forEach(node=>node.classList.toggle('active',node.dataset.tab===tab));$('page-title').textContent=titles[tab];}
 document.querySelectorAll('[data-tab],[data-open]').forEach(node=>node.addEventListener('click',()=>showTab(node.dataset.tab??node.dataset.open)));
 async function api(path,body){const response=await fetch('/api/'+path,{method:body===undefined?'GET':'POST',headers:{'x-asbf-session':token,...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});const value=await response.json();if(!response.ok)throw new Error(value.error??'FUTURES_ACTION_FAILED');return value;}
-function formSettings(){return {market:$('market').value,assetMode:$('asset-mode').value,symbol:$('symbol').value.trim().toUpperCase(),marginMode:$('margin-mode').value,leverage:Number($('leverage').value),marginPercent:Number($('percent').value),directionMode:$('direction').value,dailyLossPercent:20,externalStrategy:external,positionPolicy:$('position-policy').value,externalMarginPolicy:externalMargin};}
+function formSettings(){return {market:$('market').value,assetMode:$('asset-mode').value,symbol:$('symbol').value.trim().toUpperCase(),marginMode:$('margin-mode').value,leverage:Number($('leverage').value),marginPercent:Number($('percent').value),directionMode:$('direction').value,dailyLossPercent:20,externalStrategy:external,positionPolicy:$('position-policy').value,externalPositionPolicy:$('external-position-policy').value,externalMarginPolicy:externalMargin};}
 function formCredentials(){const pem=$('pem').value.trim()||privatePem;return {apiKey:$('key').value.trim(),...($('secret').value?{apiSecret:$('secret').value.trim()}:{privateKeyPem:pem})};}
 function savedForm(){return {password:$('password').value,settings:formSettings(),preferences:{autoConnect:$('auto-connect').checked}};}
 function table(id,rows){const target=$(id);target.replaceChildren();for(const values of rows){const tr=document.createElement('tr');for(const value of values){const td=document.createElement('td');td.textContent=value??'—';tr.append(td);}target.append(tr);}}
@@ -23,10 +23,10 @@ function render(state){
   $('start').disabled=busy||!state.unlocked||!state.connected||state.running||state.pending||(!owned.length&&!!s?.blocker)||!!s?.hedgeLock?.active||$('confirmation').value!=='START REAL FUTURES TRADING';
   $('close-position').disabled=busy||!state.connected||!p||state.pending||$('confirmation').value!=='START REAL FUTURES TRADING';
   for(const id of ['check','reconcile','history','review','apply-settings','contract-settings','strategy-file','reset-strategy','lock'])$(id).disabled=busy||!state.unlocked;
-  $('equity').textContent=num(s?.equityUsdt);$('pnl').textContent=s?num(Number(s.equityUsdt)-Number(s.day.baselineUsdt)):'—';$('loss').textContent=s?num(Math.max(0,s.lossPercent),2)+'%':'—';$('count').textContent=String(s?.realOrderCount??0);
+  $('equity').textContent=num(s?.equityUsdt);$('pnl').textContent=s?.day?.baselineUsdt!=null?num(Number(s.equityUsdt)-Number(s.day.baselineUsdt)):'—';$('loss').textContent=Number.isFinite(s?.lossPercent)?num(Math.max(0,s.lossPercent),2)+'%':'—';$('count').textContent=String(s?.realOrderCount??0);
   $('chart-symbol').textContent=s?s.symbol+' · '+(s.market==='USD_M'?'U 本位':'币本位'):'等待行情';$('mark-price').textContent=num(s?.markPrice,8);$('funding').textContent=s?.fundingRate!==null&&s?.fundingRate!==undefined?num(Number(s.fundingRate)*100,6)+'%':'—';$('funding-time').textContent=when(s?.nextFundingTime);chart(s?.candles);
   $('chart-note').textContent=s?'已收盘的一分钟行情；权益与持仓以账户核对结果为准。':'只显示实际合约行情。';
-  $('position').textContent=owned.length===2?`同时持有多空两边：LONG ${s.positions.LONG.quantity} / SHORT ${s.positions.SHORT.quantity}`:p?`${p.direction==='LONG'?'多仓 / Long':'空仓方向 / Short'} · ${p.symbol} · ${p.quantity} · 入场 ${p.entryPrice}`:'无持仓 / Flat';$('liquidation').textContent=num(s?.liquidationPrice,8);
+  $('position').textContent=owned.length===2?`同时持有多空两边：LONG ${s.positions.LONG.quantity} / SHORT ${s.positions.SHORT.quantity}`:p?`${p.direction==='LONG'?'多仓 / Long':'空仓方向 / Short'} · ${p.symbol} · ${p.quantity} · 入场 ${p.entryPrice}`:(state.connected?'本程序在该合约空仓':'等待核对本程序持仓');$('liquidation').textContent=num(s?.liquidationPrice,8);
   $('protection').textContent=s?.protection?`交易所止损已核对 · ${s.protection.triggerPrice} · ${s.protection.status}`:p?'持仓尚无已确认的交易所止损，请立即核对。':'无程序持仓止损';
   $('signal').textContent=s?.signal?`${s.signal.intent??'等待 / Wait'} · ${s.signal.reason??''}`:'等待核对';$('blocker').textContent=s?.blocker?message(s.blocker):'';
   $('planned-margin').textContent=plan?.allocation?`${plan.allocation.initialMargin} ${s.marginAsset}（预算 ${plan.allocation.targetMarginUsdt} USDT）`:'—';$('planned-notional').textContent=plan?.allocation?`${plan.allocation.notionalUsdt} USDT`:'—';$('planned-fees').textContent=plan?.allocation?`${plan.allocation.reservedRoundTripFees} ${s.marginAsset}`:'—';$('actual-settings').textContent=s?`${s.configuration.marginMode} / ${s.configuration.leverage}× / ${s.hedge?'双向':'单向'}`:'—';
@@ -34,7 +34,7 @@ function render(state){
   renderHedgeAndMargin(state);table('orders',(s?.orders??[]).toReversed().map(row=>[when(row.time),row.market+' / '+row.symbol,row.intent,row.quantity,row.positionSide,row.status]));table('activity',(state.logs??[]).toReversed().map(row=>[when(row.time),row.event,message(row.code)]));
   $('last-updated').textContent=s?'最近核对 '+when(s.checkedAt):'本机运行 · 尚未核对';
 }
-function fillSettings(state){if(!state.settings)return;const s=state.settings;external=s.externalStrategy;externalMargin=s.externalMarginPolicy??null;for(const [id,value] of Object.entries({market:s.market,symbol:s.symbol,'asset-mode':s.assetMode??'single','margin-mode':s.marginMode,leverage:s.leverage,percent:s.marginPercent,direction:s.directionMode,'position-policy':s.positionPolicy??'single'}))$(id).value=value;$('auto-connect').checked=state.preferences.autoConnect;updateAssetModeForm();editing=false;}
+function fillSettings(state){if(!state.settings)return;const s=state.settings;external=s.externalStrategy;externalMargin=s.externalMarginPolicy??null;for(const [id,value] of Object.entries({market:s.market,symbol:s.symbol,'asset-mode':s.assetMode??'single','margin-mode':s.marginMode,leverage:s.leverage,percent:s.marginPercent,direction:s.directionMode,'position-policy':s.positionPolicy??'single','external-position-policy':s.externalPositionPolicy??'block'}))$(id).value=value;$('auto-connect').checked=state.preferences.autoConnect;updateAssetModeForm();editing=false;}
 const saveFeedback=document.createElement('p');
 const checkFeedback=document.createElement('p');
 checkFeedback.className='signal';
@@ -69,6 +69,20 @@ function renderCheck(state){
     if(typeof modes.multiAssets==='boolean')labels.push(modes.multiAssets?'多资产保证金':'单资产保证金');
     if(typeof modes.hedge==='boolean')labels.push(modes.hedge?'双向持仓':'单向持仓');
     if(labels.length)parts.push('币安 U 本位账户 · '+labels.join(' / '));
+  }
+  if(state.settings?.externalPositionPolicy==='otherContracts'){
+    parts.push('已启用其他合约持仓共存。机器人只管理 '+marketNames[state.settings.market]+' '+state.settings.symbol+' 的程序仓位。');
+    const exposure=state.externalExposure;
+    if(exposure){
+      const positions=exposure.positions??[];
+      const labels=positions.slice(0,4).map(row=>{
+        const side=row.direction==='LONG'?'多仓':row.direction==='SHORT'?'空仓方向':'';
+        return [marketNames[row.market]??row.market,row.symbol,side].filter(Boolean).join(' ');
+      });
+      const more=positions.length>labels.length?' 等':'';
+      if(labels.length)parts.push('最近核对识别到 '+positions.length+' 个其他合约仓位（'+labels.join('、')+more+'），由你在币安管理。');
+      if(exposure.openOrderCount||exposure.conditionalOrderCount)parts.push('其他合约另有 '+exposure.openOrderCount+' 笔普通挂单、'+exposure.conditionalOrderCount+' 笔条件单。');
+    }
   }
   const capacity=state.marginCapacity;
   if(capacity){
@@ -147,20 +161,23 @@ async function act(name,body={},after){
   }
 }
 function renderButtons(){const notice=$('notice').textContent;render(current);$('notice').textContent=notice;}
-for(const id of ['market','symbol','asset-mode','margin-mode','leverage','percent','direction','position-policy','auto-connect'])$(id).addEventListener('input',()=>{editing=true;});
+for(const id of ['market','symbol','asset-mode','margin-mode','leverage','percent','direction','position-policy','external-position-policy','auto-connect'])$(id).addEventListener('input',()=>{editing=true;});
 $('confirmation').addEventListener('input',()=>{if(current)renderButtons();});
 $('market').addEventListener('change',()=>{updateAssetModeForm();$('symbol').value=$('market').value==='USD_M'?'BTCUSDT':'BTCUSD_PERP';$('leverage').value='';$('preflight-result').textContent='合约类型已变，请重新读取设置。';$('symbols').replaceChildren();});
 $('pem-file').addEventListener('change',async()=>{const f=$('pem-file').files[0];if(!f)return;if(f.size>16384)return void($('notice').textContent='PEM 文件过大。');privatePem=await f.text();$('secret').value='';$('notice').textContent='RSA PEM 已在内存中准备，保存后加密到本机。';});
 $('generate').onclick=()=>act('generate-key',{password:$('password').value},value=>{privatePem=value.privateKeyPem;$('secret').value='';$('public-key').textContent=value.publicKey;$('public-key').hidden=false;$('copy-public').hidden=false;$('notice').textContent=value.reused?'已找回同一 RSA 公钥。':'已生成 RSA 公钥，请在币安注册；私钥已加密保存。';});
 $('copy-public').onclick=async()=>{try{await navigator.clipboard.writeText($('public-key').textContent);$('notice').textContent='公钥已复制。';}catch{$('notice').textContent='请选中并复制下方公钥。';}};
-$('preflight').onclick=()=>act('preflight',{password:$('password').value,market:$('market').value,symbol:$('symbol').value.trim().toUpperCase(),...($('key').value?{credentials:formCredentials()}:{})},value=>{if($('asset-mode').value!=='multi'||$('market').value!=='USD_M')$('margin-mode').value=value.configuration.marginMode;$('leverage').value=value.configuration.leverage;$('preflight-result').textContent=`币安当前：${value.configuration.marginMode} / ${value.configuration.leverage}×；总权益 ${num(value.equityUsdt)} USDT；发现 ${value.unmanagedPositions} 个非零仓位。${capacityText(value.marginCapacity)} 读取不会改变账户。`;});
+$('preflight').onclick=()=>act('preflight',{password:$('password').value,market:$('market').value,symbol:$('symbol').value.trim().toUpperCase(),...($('key').value?{credentials:formCredentials()}:{})},value=>{if($('asset-mode').value!=='multi'||$('market').value!=='USD_M')$('margin-mode').value=value.configuration.marginMode;$('leverage').value=value.configuration.leverage;$('preflight-result').textContent=`币安当前：${value.configuration.marginMode} / ${value.configuration.leverage}×；总权益 ${num(value.equityUsdt)} USDT；两个钱包共 ${value.unmanagedPositions} 个非零仓位。${capacityText(value.marginCapacity)} 读取不会改变账户。`;});
 $('catalog').onclick=()=>act('catalog',{market:$('market').value},value=>{$('symbols').replaceChildren(...value.symbols.map(row=>{const option=document.createElement('option');option.value=row.symbol;option.label=row.marginAsset;return option;}));$('notice').textContent=`已读取 ${value.symbols.length} 个可用永续合约，请在合约输入栏选择。`;});
 $('save').onclick=()=>act('save',{...savedForm(),passwordRepeat:$('password-repeat').value,credentials:formCredentials()},()=>{$('key').value='';$('secret').value='';$('pem').value='';privatePem='';showTab('workspace');});
 $('unlock').onclick=()=>act('unlock',{password:$('password').value},()=>showTab('workspace'));
 $('lock').onclick=()=>act('lock',{},()=>{$('password').value='';$('password-repeat').value='';privatePem='';$('pem').value='';$('public-key').hidden=true;});
 $('apply-settings').onclick=()=>act('settings',savedForm(),state=>{
   const label=state.settings.assetMode==='multi'?'多资产':'单资产';
-  actionNotice=state.settings.market==='USD_M'?'本机已保存「'+label+'」。请回到合约总览做只读核对。':'本机合约配置已保存。';
+  const policy=state.settings.externalPositionPolicy==='otherContracts'?'允许其他合约持仓共存':'发现外部持仓时暂停';
+  const details=[marketNames[state.settings.market]+' '+state.settings.symbol,policy];
+  if(state.settings.market==='USD_M')details.push(label);
+  actionNotice='本机已保存「'+details.join(' · ')+'」。请回到合约总览做只读核对。';
   reportSave(actionNotice);
   $('notice').textContent=actionNotice;
 });
@@ -173,9 +190,15 @@ $('strategy-file').onchange=async()=>{const f=$('strategy-file').files[0];if(!f)
 $('reset-strategy').onclick=()=>act('strategy',{text:'',password:$('password').value});
 async function download(path,name){try{const response=await fetch('/api/'+path,{headers:{'x-asbf-session':token}});if(!response.ok){const value=await response.json();throw new Error(value.error);}const url=URL.createObjectURL(await response.blob()),link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(error){$('notice').textContent=message(error.message);}}
 $('history').onclick=()=>download('history','AdaptiveFuturesBot-Orders.csv');$('review').onclick=()=>download('review','AdaptiveFuturesBot-Review.md');
-async function refresh(){if(busy)return;try{const state=await api('status');render(state);}catch{$('connection-state').textContent='本机服务未连接';$('start').disabled=true;$('close-position').disabled=true;}}
+async function refresh(){if(busy)return;try{const state=await api('status');if(state.unlocked&&!current?.unlocked&&!editing)fillSettings(state);render(state);}catch{$('connection-state').textContent='本机服务未连接';$('start').disabled=true;$('close-position').disabled=true;}}
 
 Object.assign(messages,{
+  MANUAL_POSITION_ON_SELECTED_CONTRACT:'所选合约已有程序以外的持仓。若要保留手动仓，请为机器人选择另一份合约，保存后重新做只读核对。双向持仓也须分开合约。',
+  UNMANAGED_ORDER_ON_SELECTED_CONTRACT:'所选合约有程序以外的委托。请到币安核对普通和条件委托，或为机器人选择一份没有外部仓位与委托的合约。',
+  UNIDENTIFIED_EXTERNAL_FUTURES_EXPOSURE:'有持仓或委托无法确认所属合约，已暂停。请在币安检查两个合约钱包的持仓和挂单，再重新核对。',
+  ACCOUNT_MODE_CHANGE_REQUIRES_NO_EXTERNAL_EXPOSURE:'账户还有其他合约的持仓或委托，无法切换账户模式。要保留手动仓，请沿用币安当前账户模式。',
+  EXTERNAL_BOT_ORDER_REQUIRES_REVIEW:'在其他合约发现带有程序标识的委托，归属待核对。请到币安检查挂单和条件单，并保留本机记录。',
+  EXTERNAL_MIDNIGHT_HISTORY_UNVERIFIED:'有其他合约持仓，无法核实零点的账户权益。当天风险基准待核对，已暂停新增仓位。',
   INVALID_SETTLEMENT_ASSET:'交易所钱包返回了当前版本无法识别的资产代码，完整核对已停止。',
   INVALID_USD_M_ASSET_MODE:'请选择单资产或多资产。',
   ASSET_MODE_PREFERENCE_MISMATCH:'本机所选资产模式与币安不同。请到账户与合约核对选择并保存。',

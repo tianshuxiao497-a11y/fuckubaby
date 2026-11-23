@@ -64,8 +64,14 @@ for(const name of CUSTOMER_DESKTOP_FILES){
   const file=resolve(root,name),stat=await lstat(file);
   if(!stat.isFile()||stat.isSymbolicLink()||stat.size>500000||await realpath(file)!==file)throw new Error('REGULAR_PUBLIC_RUNTIME_FILE_REQUIRED');
   let data=await readFile(file);
+  if(name==='products/spot-live-pilot/live/engine.mjs'||name==='products/futures-live-pilot/live/engine.mjs'){
+    data=Buffer.from(data.toString().replace("'0.3.0-personal'","'0.3.4-customer'"));
+  }
   if(name==='products/spot-live-pilot/live/server.mjs')data=Buffer.from(data.toString().replace('tradingAllowed = () => true','tradingAllowed = () => false'));
   if(name==='products/futures-live-pilot/live/server.mjs')data=Buffer.from(data.toString().replace('tradingAllowed=()=>true','tradingAllowed=()=>false'));
+  if(name==='products/spot-live-pilot/live/server.mjs'||name==='products/futures-live-pilot/live/server.mjs'){
+    data=Buffer.from(data.toString().replace(/edition:\s*'personal'/g,"edition:'customer'"));
+  }
   if(name==='products/spot-live-pilot/live/ui.js')data=Buffer.from(data.toString().replace("element('start').disabled = blocked", "element('start').disabled = value.tradingAuthorized === false || blocked"));
   if(name==='products/futures-live-pilot/live/ui.js'){
     let text=data.toString().replace("$('start').disabled=busy", "$('start').disabled=state.tradingAuthorized===false||busy");
@@ -73,8 +79,8 @@ for(const name of CUSTOMER_DESKTOP_FILES){
     data=Buffer.from(text);
   }
   if(name==='products/spot-live-pilot/live/ui.html'||name==='products/futures-live-pilot/live/ui.html'){
-    let text=data.toString('utf8').replaceAll('LIVE PERSONAL','LIVE CUSTOMER').replaceAll('FUTURES PERSONAL','FUTURES CUSTOMER').replaceAll('MAINNET SPOT ONLY','MAINNET SPOT ONLY').replaceAll('PERSONAL MAINNET','CUSTOMER MAINNET').replaceAll('Live Personal','Live Customer').replaceAll('· Personal','· Customer').replaceAll('DESKTOP 0.3.0 · PERSONAL','DESKTOP 0.3.3 · CUSTOMER');
-    const section='<article class="panel narrow"><p class="eyebrow">CUSTOMER EDITION 0.3.3</p><h3>实盘客户订阅版</h3><p>在窗口顶部填写本实盘商品的 Whop 买家许可证。一证一机；使用购买账号在订单中复制。旧测试版许可证不能用于本版。</p><p>每 30 秒联网核验，短期授权最多 120 秒。失效或断网后停止自动化，不自动平仓；现有交易所保护单保留，手动合约平仓通道保留。恢复后仍需本人确认启动。</p><p>模拟检查与四平台启动检查不等于已完成真实账户成交验收。</p></article>';
+    let text=data.toString('utf8').replaceAll('LIVE PERSONAL','LIVE CUSTOMER').replaceAll('FUTURES PERSONAL','FUTURES CUSTOMER').replaceAll('MAINNET SPOT ONLY','MAINNET SPOT ONLY').replaceAll('PERSONAL MAINNET','CUSTOMER MAINNET').replaceAll('Live Personal','Live Customer').replaceAll('· Personal','· Customer').replaceAll('DESKTOP 0.3.0 · PERSONAL','DESKTOP 0.3.4 · CUSTOMER');
+    const section='<article class="panel narrow"><p class="eyebrow">CUSTOMER EDITION 0.3.4</p><h3>实盘客户订阅版</h3><p>在窗口顶部填写本实盘商品的 Whop 买家许可证。一证一机；使用购买账号在订单中复制。旧测试版许可证不能用于本版。</p><p>每 30 秒联网核验，短期授权最多 120 秒。失效或断网后停止自动化，不自动平仓；现有交易所保护单保留，手动合约平仓通道保留。恢复后仍需本人确认启动。</p><p>模拟检查与四平台启动检查不等于已完成真实账户成交验收。</p></article>';
     text=text.replace(/(<section data-view="(?:license|edition)" hidden>)[\s\S]*?<\/section>/,(_,start)=>start+section+'</section>').replace('本版尚未接入客户收费交付。模拟验收不代表已完成真实账户成交验证。','本版使用独立的 Whop 实盘商品授权。模拟验收不代表已完成真实账户成交验证。');
     data=Buffer.from(text);
   }
@@ -82,5 +88,5 @@ for(const name of CUSTOMER_DESKTOP_FILES){
   const target=resolve(destination,name);await mkdir(dirname(target),{recursive:true});await writeFile(target,data);
   entries.push({path:name,sha256:createHash('sha256').update(data).digest('hex')});
 }
-await writeFile(resolve(destination,'RUNTIME-MANIFEST.json'),JSON.stringify({version:'0.3.3-customer',mode:'BINANCE_SPOT_AND_FUTURES_MAINNET',edition:'customer',files:entries},null,2));
+await writeFile(resolve(destination,'RUNTIME-MANIFEST.json'),JSON.stringify({version:'0.3.4-customer',mode:'BINANCE_SPOT_AND_FUTURES_MAINNET',edition:'customer',files:entries},null,2));
 console.log(JSON.stringify({publicRuntimeFiles:entries.length,sourceCredentialFilesIncluded:false}));

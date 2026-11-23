@@ -37,7 +37,7 @@ export async function createFuturesServer({profile=defaultProfile(),port=0,now=D
   const logs=[];const record=(event,code=null)=>{logs.push({time:now(),event,code});if(logs.length>200)logs.shift();};
   const status=()=>({version:FUTURES_VERSION,environment:'BINANCE_FUTURES_MAINNET',tradingAuthorized:tradingAllowed()===true,edition:'personal',running:engine?.running??false,autoMarginArmed:engine?.autoMarginArmed??false,unlocked:!!engine,vaultExists,settings,preferences:prefs,
     connected:!!engine?.last?.accountChecked&&!engine.error&&now()>=engine.last.localCheckedAt&&now()-engine.last.localCheckedAt<30000,snapshot:engine?.last??null,pending:!!engine?.state?.pending,error:engine?.error??null,reconnecting:!!engine&&prefs.autoConnect&&failures>0,
-    walletRead:engine?.walletRead??null,accountModes:engine?.accountModes??null,marginCapacity:engine?.marginCapacity??null,readFailure:engine?.readFailure??null,checking:!!monitorRead,logs:logs.slice(-100)});
+    walletRead:engine?.walletRead??null,accountModes:engine?.accountModes??null,marginCapacity:engine?.marginCapacity??null,externalExposure:engine?.externalExposure??null,readFailure:engine?.readFailure??null,checking:!!monitorRead,logs:logs.slice(-100)});
   async function replace(data){
     if(engine?.running||engine?.autoMarginArmed||engine?.busy||engine?.state?.pending||ownedPositions(engine?.state).length)throw new Error('FLAT_STOPPED_RECONCILED_FUTURES_PROFILE_REQUIRED');
     const config=validateSettings(data.settings),savedPrefs=preferences(data.preferences),savedCredentials=credentials(data.credentials),clients=clientFactory(savedCredentials);

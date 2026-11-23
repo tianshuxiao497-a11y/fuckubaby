@@ -6,20 +6,22 @@ import {atomicWriteJson} from '../../../lib/atomic-json.mjs';
 import {FUTURES_CONFIRMATION,SETTINGS_CONFIRMATION,MODE_CONFIRMATION,MARGIN_CONFIRMATION,HEDGE_CONFIRMATION} from './client.mjs';
 import {units,signedUnits,decimal,multiply,multiplyUp,divide,floorStep,ceilStep,SCALE,absolute,openingQuantity,stopPrice,totalEquityUsdt,pnl,dailyLock} from './math.mjs';
 import {contractSymbol,contractRules,leverageTiers,checkLeverage,checkIsolatedStop,futuresFees,signedPosition} from './market.mjs';
-import {accountIdentity,walletSnapshot,newLedger,validateLedger,nativeWalletsAt,aggregateAssets,verifyWallets,addFunding,applyFinalOrder,ownedPositions,ownedProtections} from './ledger.mjs';
+import {accountIdentity,walletSnapshot,newLedger,validateLedger,nativeWalletsAt,aggregateAssets,verifyWallets,addFunding,incomeCursor,makeExternalSnapshot,externalMidnightPnl,applyFinalOrder,ownedPositions,ownedProtections} from './ledger.mjs';
 import {parseFuturesStrategy,futuresSignal} from './strategy.mjs';
 import {parseMarginPolicy,registerMarginPolicy,autoMarginDecision,AUTO_MARGIN_CONFIRMATION,marginPolicyDigest} from './margin-policy.mjs';
 import {acquireProfileLease} from '../../../lib/profile-lease.mjs';
 export const FUTURES_VERSION='0.3.0-personal';
 export function validateSettings(value){
-  const keys=['market','symbol','assetMode','marginMode','leverage','marginPercent','directionMode','dailyLossPercent','externalStrategy','positionPolicy','externalMarginPolicy'];
+  const keys=['market','symbol','assetMode','marginMode','leverage','marginPercent','directionMode','dailyLossPercent','externalStrategy','positionPolicy','externalMarginPolicy','externalPositionPolicy'];
   if(!value||Object.keys(value).some(k=>!keys.includes(k))||!['USD_M','COIN_M'].includes(value.market)||!['CROSSED','ISOLATED'].includes(value.marginMode)||!Number.isSafeInteger(value.leverage)||value.leverage<1||value.leverage>1000||typeof value.marginPercent!=='number'||!Number.isFinite(value.marginPercent)||value.marginPercent<1||value.marginPercent>2||!['both','long','short'].includes(value.directionMode)||value.dailyLossPercent!==20)throw new Error('EXPLICIT_FUTURES_MARGIN_LEVERAGE_AND_RISK_REQUIRED');
   contractSymbol(value.symbol);
   if(value.positionPolicy!==undefined&&!['single','hedge'].includes(value.positionPolicy))throw new Error('EXPLICIT_POSITION_POLICY_REQUIRED');
+  const externalPositionPolicy=value.externalPositionPolicy===undefined?'block':value.externalPositionPolicy;
+  if(!['block','otherContracts'].includes(externalPositionPolicy))throw new Error('INVALID_EXTERNAL_POSITION_POLICY');
   const assetMode=value.assetMode===undefined?'single':value.assetMode;
   if(!['single','multi'].includes(assetMode))throw new Error('INVALID_USD_M_ASSET_MODE');
   if(value.market==='USD_M'&&assetMode==='multi'&&value.marginMode!=='CROSSED')throw new Error('MULTI_ASSETS_REQUIRES_CROSS');
-  return {...value,assetMode,positionPolicy:value.positionPolicy??'single',externalStrategy:value.externalStrategy?parseFuturesStrategy(JSON.stringify(value.externalStrategy)):null,externalMarginPolicy:value.externalMarginPolicy?parseMarginPolicy(JSON.stringify(value.externalMarginPolicy)):null};
+  return {...value,assetMode,externalPositionPolicy,positionPolicy:value.positionPolicy??'single',externalStrategy:value.externalStrategy?parseFuturesStrategy(JSON.stringify(value.externalStrategy)):null,externalMarginPolicy:value.externalMarginPolicy?parseMarginPolicy(JSON.stringify(value.externalMarginPolicy)):null};
 }
 const terminal=new Set(['FILLED','CANCELED','EXPIRED','REJECTED','EXPIRED_IN_MATCH']);
 const algoTerminal=new Set(['FINISHED','CANCELED','CANCELLED','REJECTED','EXPIRED','TRIGGERED']);
@@ -30,6 +32,23 @@ const entryId=()=> 'asbf_'+randomBytes(14).toString('hex');
 const algoId=()=> 'asbp_'+randomBytes(14).toString('hex');
 const dateAt=time=>new Date(time+8*3600000).toISOString().slice(0,10);
 const dayStart=time=>Date.parse(dateAt(time)+'T00:00:00.000+08:00');
+const validExchangeSymbol=s=>typeof s==='string'&&/^[\p{L}\p{N}_-]{2,64}$/u.test(s);
+function marginWalletsOf(env){
+  const wallets={};
+  for(const [market,account] of Object.entries(env.accounts))for(const a of account.assets){
+    if(typeof a.unrealizedProfit!=='string')throw new Error('COMPLETE_UNREALIZED_PNL_REQUIRED');
+    wallets[market+'.'+a.asset]=decimal(signedUnits(a.walletBalance)+signedUnits(a.unrealizedProfit));
+  }
+  return wallets;
+}
+
+function matchesOwnedPosition(row,position,verifyEntry){
+  const signed=signedPosition(row);
+  if(!position||position.symbol!==row.symbol||position.positionSide!==row.positionSide||
+    signed.direction!==position.direction||units(signed.quantity)!==units(position.quantity))return false;
+  // Binance rounds the displayed entry price. Compare at its eight-decimal reporting precision.
+  return !verifyEntry||(typeof row.entryPrice==='string'&&units(row.entryPrice)>0n&&absolute(units(row.entryPrice)-units(position.entryPrice))<=SCALE/100000000n);
+}
 
 export class FuturesEngine{
   constructor({profile,clients,settings,now=Date.now,guard=()=>true,signalFactory=futuresSignal}){
@@ -37,6 +56,7 @@ export class FuturesEngine{
     if(!clients?.USD_M||!clients?.COIN_M)throw new Error('BOTH_FUTURES_CLIENTS_REQUIRED');
   }
   get client(){return this.clients[this.settings.market];}
+  get allowExternal(){return this.settings.externalPositionPolicy==='otherContracts';}
   time(){try{return this.client.serverNow?.()??this.now();}catch{return this.now();}}
   async acquire(){
     await mkdir(this.profile,{recursive:true,mode:0o700});if((await lstat(this.profile)).isSymbolicLink())throw new Error('REGULAR_FUTURES_PROFILE_REQUIRED');
@@ -63,7 +83,7 @@ export class FuturesEngine{
   }
   async environment({showWallet=false,readCapacity=true}={}){
     const accounts={},balances={},positions={},orders={},algos={};
-    this.accountModes=null;this.marginCapacity=null;
+    this.accountModes=null;this.marginCapacity=null;this.externalExposure=null;
     const selected=this.settings.market;
     if(showWallet){
       await this.client.syncTime();
@@ -93,7 +113,7 @@ export class FuturesEngine{
     // USD-M Account Information V3 supplies wallet amounts; Account Configuration supplies permissions.
     if(config?.canTrade!==true||!accounts.USD_M||('canTrade' in accounts.USD_M&&accounts.USD_M.canTrade!==true))throw new Error('TRADABLE_FUTURES_ACCOUNTS_REQUIRED');
     accounts.USD_M={...accounts.USD_M,canTrade:config.canTrade};
-    return {accounts,balances,positions,orders,algos,hedge:modes.hedge,capacity:this.marginCapacity,uid:accountIdentity(balances),wallets:walletSnapshot(accounts)};
+    return {accounts,balances,positions,orders,algos,hedge:modes.hedge,capacity:this.marginCapacity,uid:accountIdentity(balances),wallets:walletSnapshot(accounts),observedAt:this.time()};
   }
   async readMarginCapacity(modes,account,balances){
     const asset=this.settings.symbol.endsWith('USDC')?'USDC':'USDT';
@@ -122,16 +142,42 @@ export class FuturesEngine{
     // Binance already nets position and order margin in its USD account-wide availableBalance.
     return {mode,asset,availableUsd:decimal(availableUsd),availableNative:decimal(divide(availableUsd,assetUsd)),availableUsdt:decimal(divide(availableUsd,usdtUsd)),poolEquityUsdt:decimal(divide(equityUsd,usdtUsd)),assetUsdt:decimal((assetUsd*SCALE+usdtUsd-1n)/usdtUsd),eligible,time:this.now()};
   }
-  assertOwnedEnvironment(env){
+  assertOwnedEnvironment(env,{markets=['USD_M','COIN_M'],requireAccountFlat=false}={}){
     const positions=ownedPositions(this.state),protections=ownedProtections(this.state);
-    for(const market of ['USD_M','COIN_M']){
+    const summary={positions:[],openOrderCount:0,conditionalOrderCount:0},external=[];
+    for(const market of markets){
+      const reserved=symbol=>(market===this.settings.market&&symbol===this.settings.symbol)||positions.some(p=>p.market===market&&p.symbol===symbol)||protections.some(p=>p.market===market&&p.symbol===symbol);
       const nonzero=env.positions[market].filter(row=>signedPosition(row).quantity!=='0');
-      if(nonzero.length!==positions.filter(p=>p.market===market).length)throw new Error('UNMANAGED_OR_CHANGED_FUTURES_POSITION');
-      for(const row of nonzero){const signed=signedPosition(row),position=positions.find(p=>p.market===market&&p.direction===signed.direction);if(!position||row.symbol!==position.symbol||row.positionSide!==position.positionSide||units(signed.quantity)!==units(position.quantity))throw new Error('FUTURES_POSITION_DIFFERS_FROM_OWNED_LEDGER');}
-      if(env.orders[market].length)throw new Error('UNRESOLVED_OR_UNMANAGED_FUTURES_ORDERS');
-      for(const row of env.algos[market])if(!protections.some(p=>p.market===market&&row.clientAlgoId===p.id))throw new Error('UNMANAGED_FUTURES_PROTECTION_ORDER');
+      if(!this.allowExternal&&nonzero.length!==positions.filter(p=>p.market===market).length)throw new Error('UNMANAGED_OR_CHANGED_FUTURES_POSITION');
+      const matched=new Set();
+      for(const row of nonzero){
+        const {direction}=signedPosition(row);
+        if(this.allowExternal&&!validExchangeSymbol(row.symbol))throw new Error('UNIDENTIFIED_EXTERNAL_FUTURES_EXPOSURE');
+        if(this.allowExternal&&!reserved(row.symbol)){
+          external.push({...row,market});summary.positions.push({market,symbol:row.symbol,direction});continue;
+        }
+        const position=positions.find(p=>p.market===market&&p.symbol===row.symbol&&p.direction===direction);
+        if(!position&&this.allowExternal)throw new Error('MANUAL_POSITION_ON_SELECTED_CONTRACT');
+        if(matched.has(position)||!matchesOwnedPosition(row,position,this.allowExternal))throw new Error('FUTURES_POSITION_DIFFERS_FROM_OWNED_LEDGER');
+        matched.add(position);
+      }
+      if(positions.some(p=>p.market===market&&!matched.has(p)))throw new Error('FUTURES_POSITION_DIFFERS_FROM_OWNED_LEDGER');
+      for(const [conditional,rows] of [[false,env.orders[market]],[true,env.algos[market]]]){
+        for(const row of rows){
+          const id=conditional?row.clientAlgoId:row.clientOrderId;
+          if(conditional&&protections.some(p=>p.market===market&&id===p.id&&(!this.allowExternal||row.symbol===p.symbol)))continue;
+          if(!this.allowExternal)throw new Error(conditional?'UNMANAGED_FUTURES_PROTECTION_ORDER':'UNRESOLVED_OR_UNMANAGED_FUTURES_ORDERS');
+          if(!validExchangeSymbol(row.symbol)||typeof id!=='string'||!id.trim())throw new Error('UNIDENTIFIED_EXTERNAL_FUTURES_EXPOSURE');
+          if(/^asb[fpm]_/.test(id))throw new Error('EXTERNAL_BOT_ORDER_REQUIRES_REVIEW');
+          if(reserved(row.symbol))throw new Error('UNMANAGED_ORDER_ON_SELECTED_CONTRACT');
+          if(conditional)summary.conditionalOrderCount++;else summary.openOrderCount++;
+        }
+      }
     }
     if(!env.hedge&&positions.length>1)throw new Error('EXCHANGE_POSITION_MODE_DIFFERS_FROM_LEDGER');
+    if(requireAccountFlat&&(external.length||summary.openOrderCount||summary.conditionalOrderCount))throw new Error('ACCOUNT_MODE_CHANGE_REQUIRES_NO_EXTERNAL_EXPOSURE');
+    if(markets.length===2)this.externalExposure=summary;
+    return external;
   }
   async configuration(env,rules){
     const rows=env.positions[this.settings.market],position=rows.find(row=>row.symbol===rules.symbol&&(row.positionSide==='BOTH'||row.positionSide==='LONG'));
@@ -160,10 +206,17 @@ export class FuturesEngine{
     if(end-start<2)throw new Error('FUTURES_INCOME_HISTORY_REQUIRES_MANUAL_ARCHIVE');
     const middle=Math.floor((start+end)/2);return [...await this.incomeRange(market,start,middle,depth+1),...await this.incomeRange(market,middle+1,end,depth+1)];
   }
-  async syncFunding(now){
+  async syncFunding(now,force=false){
+    const scope=this.allowExternal||this.state.externalIncomeThrough?this.settings:undefined;
     for(const market of ['USD_M','COIN_M']){
-      let through=this.state.incomeThrough[market];if(now-through<15000)continue;
-      while(through<now){const end=Math.min(now,through+6*86400000),rows=await this.incomeRange(market,through+1,end);await this.commit(addFunding(this.state,market,rows,end));through=end;}
+      let through=incomeCursor(this.state,market,scope);if(!force&&now-through<15000)continue;
+      while(through<now||(force&&through===now)){
+        const end=Math.min(now,through+6*86400000);
+        const start=scope?Math.max(this.state.createdAt,through-60000):through+1;
+        const rows=await this.incomeRange(market,start,end);
+        await this.commit(addFunding(this.state,market,rows,end,scope));through=end;
+        if(end===now)break;
+      }
     }
   }
   async reconcile(){
@@ -211,7 +264,7 @@ export class FuturesEngine{
     const trigger=stopPrice({side:direction,entryPrice:position.entryPrice,stopLossPercent:position.risk.stopLossPercent,tickSize:rules.tickSize});
     if(!row||!units(row.markPrice)||(direction==='LONG'?units(trigger)>=units(row.markPrice):units(trigger)<=units(row.markPrice)))throw new Error('PROTECTIVE_STOP_ALREADY_CROSSED_CLOSE_REVIEW_REQUIRED');
     const actualPositions=await c.request('positions'),actual=actualPositions.find(r=>r.symbol===position.symbol&&r.positionSide===position.positionSide);
-    if(!actual||units(signedPosition(actual).quantity)!==units(position.quantity))throw new Error('VERIFY_OWN_POSITION_BEFORE_PROTECTION');
+    if(!actual||!matchesOwnedPosition(actual,position,this.allowExternal))throw new Error('VERIFY_OWN_POSITION_BEFORE_PROTECTION');
     const liquidation=units(actual.liquidationPrice);if(liquidation>0n&&(direction==='LONG'?units(trigger)<=liquidation+units(rules.tickSize):units(trigger)+units(rules.tickSize)>=liquidation))throw new Error('PROTECTIVE_STOP_BEYOND_EXCHANGE_LIQUIDATION_PRICE');
     const args={algoType:'CONDITIONAL',symbol:position.symbol,side:direction==='LONG'?'SELL':'BUY',positionSide:position.positionSide,type:'STOP_MARKET',quantity:position.quantity,triggerPrice:trigger,workingType:'MARK_PRICE',priceProtect:'FALSE',...(position.positionSide==='BOTH'?{reduceOnly:'true'}:{})};
     const id=algoId();await this.commit({...this.state,pending:{kind:'PROTECTION',market:position.market,direction,id,args,createdAt:this.time()}});
@@ -234,10 +287,32 @@ export class FuturesEngine{
       if(position&&!protection)await this.protect(direction);
     }
   }
-  async baseline(now,currentEquity){
+  async externalTrades(market,symbol,start,end){
+    const rows=await this.clients[market].request('trades',{symbol,startTime:start,endTime:end,limit:1000});
+    if(!Array.isArray(rows))throw new Error('EXTERNAL_MIDNIGHT_HISTORY_UNVERIFIED');
+    if(rows.length<1000)return rows;
+    if(start>=end)throw new Error('EXTERNAL_MIDNIGHT_HISTORY_UNVERIFIED');
+    const middle=Math.floor((start+end)/2);
+    return [...await this.externalTrades(market,symbol,start,middle),...await this.externalTrades(market,symbol,middle+1,end)];
+  }
+  async baseline(now,currentEquity,externalSnapshot){
     const date=dateAt(now);if(this.state.day?.date===date)return this.state.day;
     if(dayStart(now)<this.state.createdAt)return {date,baselineUsdt:this.state.firstEquityUsdt??currentEquity,blocked:false,firstDay:true};
-    const boundary=dayStart(now),wallets=nativeWalletsAt(this.state,boundary),assets=aggregateAssets(wallets),prices=await this.prices(wallets,boundary),positions={LONG:null,SHORT:null};
+    const boundary=dayStart(now),wallets=nativeWalletsAt(this.state,boundary),positions={LONG:null,SHORT:null};
+    if(externalSnapshot){
+      const externalPnl=await externalMidnightPnl(this.state,externalSnapshot,boundary,{
+        trades:(...args)=>this.externalTrades(...args),
+        contract:async(market,symbol)=>{
+          const client=this.clients[market],catalog=await this.cached('catalog:'+market,600000,()=>client.request('catalog'));
+          const row=catalog?.symbols?.find(r=>r.symbol===symbol);
+          const bars=await client.request('markCandles',{symbol,interval:'1m',limit:1,startTime:boundary,endTime:boundary+59999});
+          if(!row||!/^[A-Z0-9]{1,24}$/.test(row.marginAsset)||!Array.isArray(bars)||bars[0]?.[0]!==boundary||!units(bars[0][1]))throw new Error('EXTERNAL_MIDNIGHT_HISTORY_UNVERIFIED');
+          return {marginAsset:row.marginAsset,contractSize:market==='USD_M'?'1':String(row.contractSize),markPrice:bars[0][1]};
+        }
+      });
+      for(const [key,amount] of Object.entries(externalPnl))wallets[key]=decimal(signedUnits(wallets[key]??'0')+signedUnits(amount));
+    }
+    const assets=aggregateAssets(wallets),prices=await this.prices(wallets,boundary);
     for(const f of [...this.state.fills].filter(f=>f.time<boundary).sort((a,b)=>a.time-b.time)){
       const old=positions[f.direction];
       if(f.effect==='OPEN'){
@@ -286,15 +361,34 @@ export class FuturesEngine{
     if(this.busy)throw new Error('FUTURES_ACTION_IN_PROGRESS');this.busy=true;
     try{
       let env=await this.environment({showWallet:!execute,readCapacity:!closingOnly});if(this.state&&this.state.uid!==env.uid)throw new Error('FUTURES_ACCOUNT_DIFFERS_FROM_SAVED_LEDGER');
-      if(!this.state){this.assertOwnedEnvironment(env);const created=newLedger(env.uid,env.wallets,this.time()),fx=await this.prices(env.wallets);created.firstEquityUsdt=totalEquityUsdt(aggregateAssets(env.wallets),fx);if(signedUnits(created.firstEquityUsdt)<=0n)throw new Error('POSITIVE_FUTURES_CAPITAL_REQUIRED');await this.commit(created);}
+      if(!this.state){this.assertOwnedEnvironment(env);const created=newLedger(env.uid,env.wallets,env.observedAt),wallets=marginWalletsOf(env),fx=await this.prices(wallets);created.firstEquityUsdt=totalEquityUsdt(aggregateAssets(wallets),fx);if(signedUnits(created.firstEquityUsdt)<=0n)throw new Error('POSITIVE_FUTURES_CAPITAL_REQUIRED');await this.commit(created);}
       const before=JSON.stringify({pending:this.state.pending,positions:this.state.positions,protections:this.state.protections});await this.reconcile();for(const direction of ['LONG','SHORT'])await this.syncProtection(direction);
-      if(before!==JSON.stringify({pending:this.state.pending,positions:this.state.positions,protections:this.state.protections}))env=await this.environment({readCapacity:!closingOnly});this.assertOwnedEnvironment(env);await this.syncFunding(this.time());verifyWallets(this.state,env.wallets);
+      if(before!==JSON.stringify({pending:this.state.pending,positions:this.state.positions,protections:this.state.protections}))env=await this.environment({readCapacity:!closingOnly});
+      const external=this.assertOwnedEnvironment(env);
+      const trackExternal=this.allowExternal||!!this.state.externalSnapshot;
+      const externalSnapshot=trackExternal?makeExternalSnapshot(external,env.observedAt):null;
+      await this.syncFunding(env.observedAt,trackExternal&&this.state.day?.date!==dateAt(env.observedAt));
+      try{verifyWallets(this.state,env.wallets);}catch(error){
+        if(!trackExternal)throw error;
+        await this.syncFunding(env.observedAt,true);verifyWallets(this.state,env.wallets);
+      }
       const {market,symbol}=this.settings,c=this.client,catalog=await this.cached('catalog:'+market,600000,()=>c.request('catalog')),rules=contractRules(catalog,market,symbol),started=this.now();
       let [book,mark,rows,rawFees,rawTiers,configuration]=await Promise.all([c.request('book',{symbol}),c.request('mark',{symbol}),c.request('candles',{symbol,interval:'1m',limit:100}),this.cached('fees:'+market+':'+symbol,60000,()=>c.request('fees',{symbol})),this.cached('brackets:'+market+':'+symbol,60000,()=>c.request('brackets',{symbol})),this.configuration(env,rules)]);
       if(Array.isArray(book))book=book.find(row=>row.symbol===symbol);if(Array.isArray(mark))mark=mark.find(row=>row.symbol===symbol);
       if(this.now()<started||this.now()-started>5000||book?.symbol!==symbol||mark?.symbol!==symbol||!units(book.bidPrice)||units(book.askPrice)<units(book.bidPrice)||!units(mark.markPrice))throw new Error('INVALID_OR_STALE_FUTURES_MARKET');
-      const now=this.time(),fees=futuresFees(rawFees,symbol),tiers=leverageTiers(rawTiers,market,symbol),marginWallets={...env.wallets};for(const family of ['USD_M','COIN_M'])for(const a of env.accounts[family].assets){if(typeof a.unrealizedProfit!=='string')throw new Error('COMPLETE_UNREALIZED_PNL_REQUIRED');marginWallets[family+'.'+a.asset]=decimal(signedUnits(a.walletBalance)+signedUnits(a.unrealizedProfit));}
-      const fx=await this.prices(marginWallets),equity=totalEquityUsdt(aggregateAssets(marginWallets),fx),basis=await this.baseline(now,equity),day={...basis,...dailyLock({previous:this.state.day,date:dateAt(now),baselineUsdt:basis.baselineUsdt,equityUsdt:equity})};await this.commit({...this.state,day});
+      const now=this.time(),fees=futuresFees(rawFees,symbol),tiers=leverageTiers(rawTiers,market,symbol),marginWallets=marginWalletsOf(env);
+      const fx=await this.prices(marginWallets),equity=totalEquityUsdt(aggregateAssets(marginWallets),fx);
+      if(dateAt(env.observedAt)!==dateAt(now))throw new Error('RECHECK_AFTER_DAILY_BOUNDARY');
+      let day;
+      try{
+        const basis=await this.baseline(now,equity,externalSnapshot);
+        day=basis.reason==='EXTERNAL_MIDNIGHT_HISTORY_UNVERIFIED'?basis:{...basis,...dailyLock({previous:this.state.day,date:dateAt(now),baselineUsdt:basis.baselineUsdt,equityUsdt:equity})};
+      }catch(error){
+        if(!trackExternal||error.message!=='EXTERNAL_MIDNIGHT_HISTORY_UNVERIFIED')throw error;
+        // Keep verified exits available and today's anchor for tomorrow. Never reset an unknown daily loss to zero.
+        day={date:dateAt(now),baselineUsdt:null,blocked:true,reason:error.message};
+      }
+      await this.commit({...this.state,day,...(trackExternal?{externalSnapshot}:{})});
       const assetModeMatches=market!=='USD_M'||(this.accountModes.multiAssets?'multi':'single')===this.settings.assetMode;
       const actualConfigurationMatches=assetModeMatches&&configuration.marginMode===this.settings.marginMode&&configuration.leverage===this.settings.leverage;let common=null;
       if(!actualConfigurationMatches)common='CONTRACT_MARGIN_OR_LEVERAGE_SETTINGS_DIFFER';
@@ -311,7 +405,7 @@ export class FuturesEngine{
         if(opening){
           if(closingOnly)blocker='MARGIN_CAPACITY_UNVERIFIED';
           if(this.settings.directionMode!=='both'&&this.settings.directionMode!==(direction==='LONG'?'long':'short'))blocker='SELECTED_DIRECTION_DISABLED';
-          if(day.blocked)blocker='DAILY_USDT_EQUITY_LOSS_20_PERCENT';
+          if(day.blocked)blocker=day.reason??'DAILY_USDT_EQUITY_LOSS_20_PERCENT';
           if(this.settings.positionPolicy==='single'&&ownedPositions(this.state).length)blocker='SINGLE_POSITION_POLICY';
           if(this.settings.positionPolicy==='hedge'&&!env.hedge)blocker='ENABLE_EXCHANGE_HEDGE_MODE_FIRST';
           const lastClose=Math.max(0,...this.state.orders.filter(row=>row.intent==='CLOSE_'+direction||row.intent==='PROTECTION_CLOSE'&&row.positionSide===(env.hedge?direction:'BOTH')).map(row=>row.time));
@@ -324,6 +418,8 @@ export class FuturesEngine{
       }
       const plan=Object.values(plans).find(p=>p.intent.startsWith('CLOSE_'))??Object.values(plans)[0]??null,primary=plan?.direction??ownedPositions(this.state)[0]?.direction??Object.keys(signals).find(d=>signals[d].intent)??'LONG';
       this.last={version:FUTURES_VERSION,environment:'BINANCE_FUTURES_MAINNET',checkedAt:now,localCheckedAt:this.now(),accountChecked:true,equityUsdt:equity,firstEquityUsdt:this.state.firstEquityUsdt,day,lossPercent:(1-Number(equity)/Number(day.baselineUsdt))*100,market,symbol,marginAsset:rules.marginAsset,configuration,actualConfigurationMatches,hedge:env.hedge,positionPolicy:this.settings.positionPolicy,feeRates:fees,leverageTiers:tiers,markPrice:mark.markPrice,fundingRate:mark.lastFundingRate??null,nextFundingTime:mark.nextFundingTime??null,liquidationPrice:configuration.legs[primary]?.liquidationPrice??null,positions:this.state.positions,protections:this.state.protections,position:this.state.position,protection:this.state.protection,pending:this.state.pending,hedgeLock:this.state.hedgeLock,signals,plans,sideBlockers:blockers,signal:signals[primary],plan,blocker:common??blockers[primary],wallets:env.wallets,collateralPrices:fx,book:{bid:book.bidPrice,ask:book.askPrice},candles:signals[primary].candles,orders:this.state.orders.slice(-50),marginEvents:this.state.marginEvents.slice(-50),realOrderCount:this.state.orders.length,running:this.running};
+      this.last.externalExposure=this.externalExposure;
+      if(day.baselineUsdt===null){this.last.lossPercent=null;this.last.blocker??=day.reason;}
       this.context={env,rules,book,fees,tiers,equity,fx,configuration};this.error=null;this.readFailure=null;
       const marginBalance=env.balances[market].find(row=>row.asset===rules.marginAsset),autoDecision=autoMarginDecision({policy:this.settings.externalMarginPolicy,state:this.state,snapshot:this.last,armed:this.autoMarginArmed,now,availableCollateral:marginBalance?.availableBalance??'0'});
       this.last.autoMargin={armed:this.autoMarginArmed,policy:this.settings.externalMarginPolicy,budget:this.settings.externalMarginPolicy?this.state.autoMarginBudgets[this.settings.externalMarginPolicy.id]??null:null,decision:autoDecision};
@@ -336,10 +432,28 @@ export class FuturesEngine{
     }catch(error){this.error=/^[A-Z0-9_]+$/.test(error.message)?error.message:'FUTURES_CHECK_FAILED';this.readFailure=error.readFailure??null;this.stop();this.syncLastState();throw error;}finally{this.busy=false;}
   }
   syncLastState(){if(this.last&&this.state){Object.assign(this.last,{positions:this.state.positions,protections:this.state.protections,position:this.state.position,protection:this.state.protection,pending:this.state.pending,hedgeLock:this.state.hedgeLock,orders:this.state.orders.slice(-50),marginEvents:this.state.marginEvents.slice(-50),realOrderCount:this.state.orders.length,running:this.running});if(this.last.autoMargin){this.last.autoMargin.armed=this.autoMarginArmed;const id=this.settings.externalMarginPolicy?.id;this.last.autoMargin.budget=id?this.state.autoMarginBudgets[id]??null:null;}}}
+  async recheckSelectedContract(allocation=null){
+    if(!this.allowExternal)return;
+    const {market,symbol}=this.settings,client=this.client;
+    // COIN-M positionRisk accepts pair rather than symbol; keep its full signed snapshot.
+    const [positions,orders,algos,account,balances]=await Promise.all([
+      client.request('positions',market==='USD_M'?{symbol}:{}),client.request('openOrders',{symbol}),client.request('openAlgos',{symbol}),
+      allocation&&market==='USD_M'?client.request('account'):null,allocation?client.request('balances'):null
+    ]);
+    if(![positions,orders,algos].every(Array.isArray))throw new Error('COMPLETE_FUTURES_ACCOUNT_SNAPSHOT_REQUIRED');
+    this.assertOwnedEnvironment({positions:{[market]:positions},orders:{[market]:orders},algos:{[market]:algos},hedge:this.last.hedge},{markets:[market]});
+    if(allocation){
+      let available;
+      if(market==='USD_M')available=(await this.readMarginCapacity(this.accountModes,account,balances)).availableNative;
+      else available=balances.find(b=>b.asset===this.last.marginAsset)?.availableBalance;
+      if(typeof available!=='string'||signedUnits(available)<units(allocation.initialMargin)+units(allocation.reservedRoundTripFees))throw new Error('AVAILABLE_COLLATERAL_INSUFFICIENT_WITH_FEES');
+    }
+  }
   async execute(plan){
     if(!this.running||!this.guard(plan)||this.state.pending||this.time()<this.last.checkedAt||this.time()-this.last.checkedAt>3000||JSON.stringify(plan)!==JSON.stringify(this.last.plan))throw new Error('REVIEWED_FRESH_FUTURES_PLAN_REQUIRED');
     if(this.state.hedgeLock?.active&&!plan.manualLock)throw new Error('MANUAL_HEDGE_LOCK_STRATEGY_PAUSED');
     if(plan.intent.startsWith('OPEN_')&&(this.state.day.blocked||this.state.protections[plan.direction]&&!plan.allowLockIncrease||this.state.positions[plan.direction]&&!plan.allowLockIncrease||this.settings.positionPolicy==='single'&&ownedPositions(this.state).length))throw new Error('FUTURES_OPENING_BLOCKED');
+    await this.recheckSelectedContract(plan.allocation);
     const id=entryId(),pending={kind:'ORDER',id,createdAt:this.time(),market:plan.market,intent:plan.intent,direction:plan.direction,args:plan.args,rules:plan.rules,risk:plan.risk,allowLockIncrease:plan.allowLockIncrease===true};await this.commit({...this.state,pending});
     if(!this.running||!this.guard(plan)||this.time()-this.last.checkedAt>3000){await this.commit({...this.state,pending:null});return;}
     try{await this.clients[plan.market].request('newOrder',{...plan.args,newClientOrderId:id});}catch(error){if(error.definitiveRejection)await this.commit({...this.state,pending:{...this.state.pending,definitiveRejection:error.binanceCode}});throw error;}await this.reconcile();await this.ensureProtections();
@@ -375,7 +489,7 @@ export class FuturesEngine{
   }
   async enableHedgeMode(confirmation){
     if(confirmation!==MODE_CONFIRMATION)throw new Error('EXPLICIT_ACCOUNT_HEDGE_MODE_CONFIRMATION_REQUIRED');if(this.running||this.busy||this.state?.pending||ownedPositions(this.state).length||ownedProtections(this.state).length)throw new Error('BOTH_FUTURES_WALLETS_MUST_BE_FLAT_FOR_MODE_CHANGE');this.busy=true;
-    try{const env=await this.environment();if(this.state&&this.state.uid!==env.uid)throw new Error('FUTURES_ACCOUNT_DIFFERS_FROM_SAVED_LEDGER');this.assertOwnedEnvironment(env);if(!env.hedge){const c=this.clients.USD_M;c.armMode(confirmation);try{await c.request('setPositionMode',{dualSidePosition:'true'});}catch(error){if(error.binanceCode!==-4059)throw error;}}this.cache.delete('positionMode');const actual=await this.environment();if(!actual.hedge)throw new Error('EXCHANGE_HEDGE_MODE_NOT_VERIFIED');this.assertOwnedEnvironment(actual);}finally{this.stop();this.busy=false;}return this.check();
+    try{const env=await this.environment();if(this.state&&this.state.uid!==env.uid)throw new Error('FUTURES_ACCOUNT_DIFFERS_FROM_SAVED_LEDGER');this.assertOwnedEnvironment(env,{requireAccountFlat:true});if(!env.hedge){const c=this.clients.USD_M;c.armMode(confirmation);try{await c.request('setPositionMode',{dualSidePosition:'true'});}catch(error){if(error.binanceCode!==-4059)throw error;}}this.cache.delete('positionMode');const actual=await this.environment();if(!actual.hedge)throw new Error('EXCHANGE_HEDGE_MODE_NOT_VERIFIED');this.assertOwnedEnvironment(actual,{requireAccountFlat:true});}finally{this.stop();this.busy=false;}return this.check();
   }
   async catalog(){const raw=await this.client.request('catalog');return (raw.symbols??[]).flatMap(row=>{try{return [contractRules(raw,this.settings.market,row.symbol)];}catch{return[];}});}
   selectedDirection(direction){const owned=ownedPositions(this.state);if(direction===undefined&&owned.length===1)return owned[0].direction;if(!['LONG','SHORT'].includes(direction))throw new Error('CHOOSE_LONG_OR_SHORT_LEG');return direction;}
@@ -410,6 +524,7 @@ export class FuturesEngine{
   }
   async submitMargin(direction,amount,{automaticPolicy=null}={}){
     const position=this.state.positions[direction];if(!position||this.state.pending)throw new Error('RECONCILED_OWNED_POSITION_REQUIRED');
+    await this.recheckSelectedContract();
     if(automaticPolicy){const p=this.settings.externalMarginPolicy,balance=this.context.env.balances[position.market].find(row=>row.asset===position.marginAsset),decision=autoMarginDecision({policy:p,state:this.state,snapshot:this.last,armed:this.autoMarginArmed,now:this.time(),availableCollateral:balance?.availableBalance??'0'});if(!p||marginPolicyDigest(p)!==marginPolicyDigest(automaticPolicy)||!decision.eligible||decision.direction!==direction||decision.amount!==amount||this.time()-this.last.checkedAt>3000)throw new Error('FRESH_EXTERNAL_AUTO_MARGIN_DECISION_REQUIRED');}
     const id='asbm_'+randomBytes(14).toString('hex'),args={symbol:position.symbol,positionSide:position.positionSide,type:1,amount:decimal(units(amount))},policyId=automaticPolicy?.id??null;
     await this.commit({...this.state,pending:{kind:'MARGIN_ADD',id,direction,market:position.market,asset:position.marginAsset,args,createdAt:this.time(),policyId,policyDigest:automaticPolicy?marginPolicyDigest(automaticPolicy):null}});

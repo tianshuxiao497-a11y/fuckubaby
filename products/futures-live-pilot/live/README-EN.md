@@ -26,6 +26,14 @@ Single-position management holds one direction at a time. Dual-leg management pe
 
 The account position-mode section shows actual Binance One-Way/Hedge mode. A local selection does not silently change Binance. To enable Hedge Mode, both Futures wallets must be flat with no ordinary or conditional orders. Type `ENABLE FUTURES HEDGE MODE` and explicitly apply. Binance's shared mode affects both families. The app never silently disables Hedge Mode.
 
+## Keep a manual position while running the strategy
+
+The default setting pauses on external positions. Existing configurations keep this setting after an upgrade.
+
+1. Unlock the local configuration. In **Connection & risk**, give the bot a separate contract. For example, keep a manual USD-M BTCUSDT position and select USD-M ETHUSDT for the bot. Reserve the selected contract for positions and orders the bot can reconcile, including conditional orders. Both sides of a contract share this restriction in Hedge Mode.
+2. Under **外部持仓** (external positions), choose **允许其他合约持仓共存** (allow positions on other contracts). Save the updated local configuration, or use the initial encrypted save on first setup. Go to **Workspace** and run the read-only check. The bot manages its own verified positions. You manage the other contracts on Binance.
+3. Check the available margin returned by Binance. Any unrealized profit Binance allows as collateral is already reflected in that figure. Available margin can fall if the profit shrinks or new orders reserve funds. The allocation percentage, fees and minimum order size still apply. The daily loss check uses account equity, so gains and losses on manual positions can affect the entry lock. New entries pause when the app cannot verify the start-of-day equity.
+
 ## Trading and manual equal hedge
 
 Type `START REAL FUTURES TRADING` to start. Long and short quantities, entry prices, protection and liquidation prices are shown separately. Each leg has its own stop and close action. Market-close actions require the trading confirmation and affect only the selected reconciled bot-owned direction.
@@ -69,6 +77,6 @@ Confirmed history debits the durable automatic budget; unknown results do not ca
 
 Stopping automation does not automatically close Spot inventory or Futures positions. Accepted exchange stops remain subject to exchange processing. Local take-profit, trailing exits and automatic margin actions stop at shutdown. Entry and protection are separate requests with an unprotected interval; neither stop execution nor price is guaranteed. Preserve uncertain requests and inspect Binance promptly, handling the account personally if needed.
 
-Do not delete ledgers to bypass errors, run other bots or trade manually in the same Futures wallets. Export CSV/review reports before discussing new rules. No customer messages or paid AI calls are automatic.
+Keep the ledger if a reconciliation fails. Check positions and orders for the selected contract on Binance. Export CSV/review reports before discussing new rules. No customer messages or paid AI calls are automatic.
 
 Profiles remain in `AdaptiveSpotBot/LivePersonal` and `AdaptiveSpotBot/FuturesPersonal` under Windows LOCALAPPDATA, Linux XDG_DATA_HOME (default `~/.local/share`) or macOS `~/Library/Application Support`. Back up the entire directory only after exit and reconciliation. API keys remain encrypted locally and are not uploaded to Whop or Cloudflare.

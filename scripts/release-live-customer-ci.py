@@ -16,7 +16,7 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-version = "0.3.3"
+version = "0.3.4"
 tag = f"v{version}-live-customer"
 repo = os.environ["GITHUB_REPOSITORY"]
 commit = os.environ["GITHUB_SHA"]
@@ -43,15 +43,19 @@ for runner, platform, arch, native_os in [
         assert archive.testzip() is None
         assert "Multi-Assets" in archive.read("Guides/START-HERE-EN.md").decode()
         assert "多资产" in archive.read("Guides/START-HERE-ZH.md").decode()
+        assert "allow positions on other contracts" in archive.read("Guides/START-HERE-EN.md").decode()
+        assert "允许其他合约持仓共存" in archive.read("Guides/START-HERE-ZH.md").decode()
         native = json.loads(archive.read("NATIVE-ACCEPTANCE.json"))
         assert (native["version"], native["platform"], native["arch"]) == (report["version"], native_os, arch)
         assert native["passed"] and native["assetModes"] == {"single": True, "multi": True, "cross": True}
+        assert native["externalPositions"] == {"defaultBlocks": True, "saved": True, "restored": True}
         assert native["unlicensedStartBlocked"] and native["realAccountReads"] == native["exchangeOrders"] == 0
     if platform == "Linux":
         qa_dir = root / f"live-customer-desktop-031-qa-{runner}-{arch}"
         installed, = qa_dir.rglob("live-customer-native-qa-Linux-installed-x64/RESULT.json")
         installed_qa = json.loads(installed.read_text())
         assert installed_qa["passed"] and installed_qa["assetModes"] == native["assetModes"]
+        assert installed_qa["externalPositions"] == native["externalPositions"]
     packages[name] = path
     reports.append(report)
 
@@ -65,7 +69,7 @@ if existing:
 else:
     gh("release", "create", tag, "--target", commit, "--draft", "--prerelease", "--title",
        f"Adaptive Trading Bot Live {version}", "--notes",
-       "Fix USD-M wallet reconciliation for single-character asset codes and clarify saved vs exchange asset mode. Windows, Linux and both Mac builds passed native checks with simulated accounts.")
+       "Keep manual positions on other futures contracts and use exchange-reported available margin for bot orders. Windows, Linux and both Mac builds passed offline native checks.")
 release_id = gh("release", "view", tag, "--json", "databaseId", "--jq", ".databaseId")
 def assets():
     return {a["name"]: a for a in json.loads(gh("api", f"repos/{repo}/releases/{release_id}/assets"))}

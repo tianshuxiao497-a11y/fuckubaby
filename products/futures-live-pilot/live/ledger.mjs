@@ -1,11 +1,15 @@
 import {createHash} from 'node:crypto';
-import {units,signedUnits,decimal,absolute,SCALE} from './math.mjs';
-import {contractSymbol} from './market.mjs';
+import {units,signedUnits,decimal,absolute,SCALE,pnl} from './math.mjs';
+import {contractSymbol,signedPosition} from './market.mjs';
 import {ownOrderId,ownAlgoId,ownMarginId} from './client.mjs';
 const hash=value=>createHash('sha256').update(value).digest('hex');
 const asset=value=>typeof value==='string'&&/^[A-Z0-9]{1,24}$/.test(value);
 const walletKey=value=>/^(USD_M|COIN_M)\.[A-Z0-9]{1,24}$/.test(value);
 const moment=value=>Number.isSafeInteger(value)&&value>0;
+const externalTypes=new Set(['REALIZED_PNL','COMMISSION','FUNDING_FEE']);
+// Read-only exchange history can include dated delivery contracts as well as perpetuals.
+const incomeSymbol=value=>typeof value==='string'&&/^[\p{L}\p{N}_-]{2,64}$/u.test(value);
+const exchangeId=value=>typeof value==='string'?/^\d{1,30}$/.test(value):Number.isSafeInteger(value)&&value>=0;
 export function accountIdentity(balances){
   const names=[];
   for(const market of ['USD_M','COIN_M']){
@@ -33,6 +37,98 @@ export function newLedger(uid,wallets,now){
 }
 export const ownedPositions=state=>Object.values(state?.positions??{}).filter(Boolean);
 export const ownedProtections=state=>Object.values(state?.protections??{}).filter(Boolean);
+
+export function makeExternalSnapshot(rows,observedAt){
+  if(!Array.isArray(rows)||!moment(observedAt))throw new Error('EXTERNAL_POSITION_SNAPSHOT_UNVERIFIED');
+  const positions=[],seen=new Set();
+  for(const row of rows){
+    if(!['USD_M','COIN_M'].includes(row?.market)||!incomeSymbol(row.symbol))throw new Error('EXTERNAL_POSITION_SNAPSHOT_UNVERIFIED');
+    const position=signedPosition(row);
+    if(!position.direction)continue;
+    const key=[row.market,row.symbol,row.positionSide].join(':');
+    if(seen.has(key)||!units(row.entryPrice))throw new Error('EXTERNAL_POSITION_SNAPSHOT_UNVERIFIED');
+    const updateTime=row.updateTime==null||row.updateTime===0||row.updateTime==='0'?null:Number(row.updateTime);
+    if(updateTime!==null&&(!moment(updateTime)||updateTime>observedAt))throw new Error('EXTERNAL_POSITION_SNAPSHOT_UNVERIFIED');
+    seen.add(key);
+    positions.push({market:row.market,symbol:row.symbol,positionSide:row.positionSide,positionAmt:position.direction==='LONG'?position.quantity:'-'+position.quantity,entryPrice:decimal(units(row.entryPrice)),updateTime});
+  }
+  return {time:observedAt,positions};
+}
+
+function openQuantity(positions,side){
+  return positions.filter(row=>row.positionSide===side).reduce((sum,row)=>sum+signedUnits(row.positionAmt),0n);
+}
+
+// Reverse external executions against one fixed mark. At that mark an execution
+// changes unrealized PNL by its signed mark-to-fill PNL minus its realized PNL.
+// This also reconstructs a manual position closed since midnight, even if no
+// open position for that contract is returned in the current account snapshot.
+export async function externalMidnightPnl(state,snapshot,boundary,{contract,trades}){
+  const unavailable=()=>new Error('EXTERNAL_MIDNIGHT_HISTORY_UNVERIFIED');
+  try{
+    if(!moment(boundary)||snapshot?.time<boundary)throw unavailable();
+    const current=makeExternalSnapshot(snapshot.positions,snapshot.time);
+    const previous=state.externalSnapshot?makeExternalSnapshot(state.externalSnapshot.positions,state.externalSnapshot.time):null;
+    const anchor=previous&&previous.time<boundary?previous:null;
+    const income=(state.externalIncome??[]).filter(row=>row.time>=boundary&&row.time<=current.time);
+    const groups=new Map(),botFills=new Set(state.fills.map(row=>row.key));
+    function group(market,symbol){
+      const key=market+':'+symbol;
+      if(!groups.has(key))groups.set(key,{market,symbol,before:[],after:[],income:[]});
+      return groups.get(key);
+    }
+    for(const row of anchor?.positions??[])group(row.market,row.symbol).before.push(row);
+    for(const row of current.positions)group(row.market,row.symbol).after.push(row);
+    for(const row of income)group(row.wallet.split('.')[0],row.symbol).income.push(row);
+    const totals={};
+    for(const {market,symbol,before,after,income:events} of groups.values()){
+      const unchanged=after.length>0&&after.every(row=>row.updateTime!==null&&row.updateTime<boundary)
+        &&before.every(old=>after.some(row=>row.positionSide===old.positionSide&&row.positionAmt===old.positionAmt&&row.entryPrice===old.entryPrice))
+        &&!events.some(event=>event.type!=='FUNDING_FEE');
+      const executions=[];
+      if(!unchanged){
+        if(!anchor)throw unavailable();
+        // Binance limits the time window per history request. Separate adjacent
+        // inclusive windows and verify the full delta against both snapshots.
+        const seen=new Set(),afterBoundaryIds=new Set(),net={LONG:0n,SHORT:0n,BOTH:0n};
+        for(let start=anchor.time;start<=current.time;){
+          const end=Math.min(current.time,start+7*86400000-1);
+          const rows=await trades(market,symbol,start,end);
+          if(!Array.isArray(rows))throw unavailable();
+          for(const row of rows){
+            if(!exchangeId(row?.id)||seen.has(String(row.id))||row.symbol!==symbol||!moment(row.time)||row.time<start||row.time>end||row.time===anchor.time||row.time===current.time||!['BUY','SELL'].includes(row.side)||!Object.hasOwn(net,row.positionSide)||!units(row.qty)||!units(row.price))throw unavailable();
+            seen.add(String(row.id));
+            if(botFills.has(market+':'+symbol+':'+row.id))continue;
+            signedUnits(row.realizedPnl);
+            net[row.positionSide]+=(row.side==='BUY'?1n:-1n)*units(row.qty);
+            if(row.time>=boundary){executions.push(row);afterBoundaryIds.add(String(row.id));}
+          }
+          start=end+1;
+        }
+        for(const side of Object.keys(net))if(openQuantity(before,side)+net[side]!==openQuantity(after,side))throw unavailable();
+        for(const event of events)if(event.type!=='FUNDING_FEE'&&event.tradeId!==null&&!afterBoundaryIds.has(event.tradeId))throw unavailable();
+      }
+      if(!after.length&&!executions.length)continue;
+      const {marginAsset,contractSize,markPrice}=await contract(market,symbol);
+      if(!asset(marginAsset)||!units(contractSize)||!units(markPrice))throw unavailable();
+      const marked=(side,quantity,price)=>signedUnits(pnl({market,side,quantity,entryPrice:price,exitPrice:markPrice,contractSize}));
+      let native=0n;
+      for(const row of after){
+        const {direction,quantity}=signedPosition(row);
+        native+=marked(direction,quantity,row.entryPrice);
+      }
+      for(const trade of executions){
+        if(trade.marginAsset&&trade.marginAsset!==marginAsset)throw unavailable();
+        native+=signedUnits(trade.realizedPnl)-marked(trade.side==='BUY'?'LONG':'SHORT',trade.qty,trade.price);
+      }
+      const key=market+'.'+marginAsset;
+      totals[key]=decimal(signedUnits(totals[key]??'0')+native);
+    }
+    return totals;
+  }catch{
+    throw unavailable();
+  }
+}
 export function migrateLedger(value){
   if(value?.version!==1)return value;
   const next={...value,version:2,positions:{LONG:null,SHORT:null},protections:{LONG:null,SHORT:null},marginEvents:[],autoMarginBudgets:{},hedgeLock:null};
@@ -48,6 +144,7 @@ export function validateLedger(state){
   if(!state||state.version!==2||!/^[a-f0-9]{64}$/.test(state.uid??'')||!moment(state.createdAt)||!state.initialWallets||!Array.isArray(state.orders)||!Array.isArray(state.fills)||!Array.isArray(state.funding)||!Array.isArray(state.marginEvents)||state.orders.length>10000||state.fills.length>50000||state.funding.length>50000||state.marginEvents.length>10000)throw new Error('INVALID_FUTURES_LEDGER');
   for(const field of ['positions','protections'])if(!state[field]||Object.keys(state[field]).sort().join(',')!=='LONG,SHORT')throw new Error('TWO_EXPLICIT_FUTURES_LEGS_REQUIRED');
   for(const [key,value] of Object.entries(state.initialWallets)){if(!walletKey(key))throw new Error('INVALID_LEDGER_WALLET');signedUnits(value);}
+  if(state.externalSnapshot!==undefined)makeExternalSnapshot(state.externalSnapshot?.positions,state.externalSnapshot?.time);
   const fillIds=new Set(),orderIds=new Set(),fundingIds=new Set();
   for(const order of state.orders){if(!ownOrderId(order.id)||orderIds.has(order.id)||!moment(order.time)||!['OPEN_LONG','OPEN_SHORT','CLOSE_LONG','CLOSE_SHORT','PROTECTION_CLOSE'].includes(order.intent))throw new Error('INVALID_FUTURES_ORDER_RECORD');orderIds.add(order.id);}
   for(const fill of state.fills){
@@ -56,6 +153,20 @@ export function validateLedger(state){
     signedUnits(fill.realizedPnl);signedUnits(fill.commission);fillIds.add(fill.key);
   }
   for(const event of state.funding){if(typeof event.key!=='string'||fundingIds.has(event.key)||!walletKey(event.wallet)||!moment(event.time))throw new Error('INVALID_FUNDING_EVENT');signedUnits(event.amount);fundingIds.add(event.key);}
+  if(state.externalIncome!==undefined){
+    if(!Array.isArray(state.externalIncome)||state.externalIncome.length>50000)throw new Error('INVALID_EXTERNAL_FUTURES_INCOME');
+    for(const event of state.externalIncome){
+      const prefix=event?.wallet?.split('.')[0]+':'+event?.type+':';
+      if(!externalTypes.has(event?.type)||!walletKey(event.wallet)||!incomeSymbol(event.symbol)||typeof event.key!=='string'||!event.key.startsWith(prefix)||!exchangeId(event.key.slice(prefix.length))||fundingIds.has(event.key)||!moment(event.time)||event.time<state.createdAt||(event.tradeId!==null&&!exchangeId(event.tradeId)))throw new Error('INVALID_EXTERNAL_FUTURES_INCOME');
+      signedUnits(event.amount);fundingIds.add(event.key);
+    }
+  }
+  if(state.externalIncomeThrough!==undefined){
+    if(!Array.isArray(state.externalIncome)||!state.externalIncomeThrough||typeof state.externalIncomeThrough!=='object'||Array.isArray(state.externalIncomeThrough))throw new Error('INVALID_FUTURES_INCOME_CURSOR');
+    for(const [market,through] of Object.entries(state.externalIncomeThrough)){
+      if(!['USD_M','COIN_M'].includes(market)||!Number.isSafeInteger(through)||through<state.createdAt-1||through>state.incomeThrough[market])throw new Error('INVALID_FUTURES_INCOME_CURSOR');
+    }
+  }
   if(state.pending&&(!['ORDER','PROTECTION','CANCEL_PROTECTION','MARGIN_ADD'].includes(state.pending.kind)||!moment(state.pending.createdAt)||!(ownOrderId(state.pending.id)||ownAlgoId(state.pending.id)||ownMarginId(state.pending.id))||!['LONG','SHORT'].includes(state.pending.direction)))throw new Error('INVALID_PENDING_FUTURES_INTENT');
   for(const direction of ['LONG','SHORT']){
     const p=state.positions[direction];if(p){contractSymbol(p.symbol);if(!['USD_M','COIN_M'].includes(p.market)||p.direction!==direction||![direction,'BOTH'].includes(p.positionSide)||!units(p.quantity)||!units(p.entryPrice)||!units(p.contractSize)||!moment(p.openedAt)||!asset(p.marginAsset)||!p.risk)throw new Error('INVALID_OWNED_FUTURES_POSITION');}
@@ -77,6 +188,7 @@ export function nativeWalletsAt(state,time=Infinity){
   const add=(key,value)=>{totals[key]=(totals[key]??0n)+value;};
   for(const fill of state.fills)if(fill.time<time){add(fill.market+'.'+fill.marginAsset,signedUnits(fill.realizedPnl));add(fill.market+'.'+fill.commissionAsset,-signedUnits(fill.commission));}
   for(const event of state.funding)if(event.time<time)add(event.wallet,signedUnits(event.amount));
+  for(const event of state.externalIncome??[])if(event.time<time)add(event.wallet,signedUnits(event.amount));
   return Object.fromEntries(Object.entries(totals).map(([key,value])=>[key,decimal(value)]));
 }
 export function aggregateAssets(wallets){
@@ -90,7 +202,89 @@ export function verifyWallets(state,actual){
     if(absolute(signedUnits(expected[key]??'0')-signedUnits(actual[key]??'0'))>10000n)throw new Error('FUTURES_WALLET_DIFFERS_FROM_PROGRAM_LEDGER');
   }
 }
-export function addFunding(state,market,rows,through){
+export function incomeCursor(state,market,scope){
+  if(!['USD_M','COIN_M'].includes(market))throw new Error('INVALID_FUTURES_INCOME_CURSOR');
+  return scope?(state.externalIncomeThrough?.[market]??state.createdAt-1):state.incomeThrough[market];
+}
+
+// The position immediately before the funding timestamp determines who received it.
+// Keep a per-symbol timeline so replaying several weeks of overlapping income is bounded.
+function ownedFundingHistory(fills,market){
+  const histories=new Map();
+  for(const fill of fills.filter(fill=>fill.market===market).sort((a,b)=>a.time-b.time)){
+    const history=histories.get(fill.symbol)??[],previous=history.at(-1);
+    const delta=units(fill.quantity)*(fill.effect==='OPEN'?1n:-1n);
+    const quantity=(previous?.quantity??0n)+delta;
+    if(quantity<0n)throw new Error('INVALID_HISTORICAL_POSITION');
+    if(previous?.time===fill.time)previous.quantity=quantity;
+    else history.push({time:fill.time,quantity});
+    histories.set(fill.symbol,history);
+  }
+  return histories;
+}
+function botHeldAt(history,time){
+  let low=0,high=history?.length??0;
+  while(low<high){
+    const middle=Math.floor((low+high)/2);
+    if(history[middle].time<time)low=middle+1;
+    else high=middle;
+  }
+  return low>0&&history[low-1].quantity>0n;
+}
+function reconcileIncome(state,market,rows,through,scope){
+  if(!['USD_M','COIN_M'].includes(scope.market)||!incomeSymbol(scope.symbol)||!Array.isArray(rows)||!Number.isSafeInteger(through)||through<incomeCursor(state,market,scope))throw new Error('COMPLETE_FUNDING_HISTORY_REQUIRED');
+  const next=structuredClone(state);
+  const funding=new Map(next.funding.map(event=>[event.key,event]));
+  const external=new Map((next.externalIncome??[]).map(event=>[event.key,event]));
+  const fills=new Map(next.fills.map(fill=>[fill.key,fill]));
+  const histories=ownedFundingHistory(next.fills,market);
+  for(const row of rows){
+    if(!row||!moment(row.time)||row.time<state.createdAt||row.time>through||!asset(row.asset))throw new Error('INVALID_EXCHANGE_INCOME');
+    const value=signedUnits(row.income);
+    if(!externalTypes.has(row.incomeType)){
+      if(value!==0n)throw new Error('UNRECONCILED_FUTURES_CASH_FLOW');
+      continue;
+    }
+    if(!incomeSymbol(row.symbol)||!exchangeId(row.tranId))throw new Error('INVALID_EXCHANGE_INCOME');
+    const type=row.incomeType,key=market+':'+type+':'+row.tranId;
+    const entry={key,wallet:market+'.'+row.asset,symbol:row.symbol,amount:decimal(value),time:row.time};
+    const priorFunding=funding.get(key);
+    if(priorFunding&&JSON.stringify(priorFunding)!==JSON.stringify(entry))throw new Error('FUNDING_HISTORY_CHANGED');
+    const tradeId=row.tradeId===undefined||row.tradeId===''||row.tradeId===null?null:String(row.tradeId);
+    if(tradeId!==null&&!exchangeId(row.tradeId))throw new Error('INVALID_EXCHANGE_INCOME');
+    const event={...entry,type,tradeId};
+    const priorExternal=external.get(key);
+    if(priorExternal){
+      if(JSON.stringify(priorExternal)!==JSON.stringify(event))throw new Error('EXTERNAL_INCOME_HISTORY_CHANGED');
+      continue;
+    }
+    const history=histories.get(row.symbol);
+    if(type==='FUNDING_FEE'){
+      if(botHeldAt(history,row.time)){funding.set(key,entry);continue;}
+      // Older builds put every funding payment in the bot report. Reclassify on replay.
+      funding.delete(key);
+    }else{
+      const own=tradeId===null?null:fills.get(market+':'+row.symbol+':'+tradeId);
+      if(own){
+        const commission=type==='COMMISSION';
+        if(row.asset!==(commission?own.commissionAsset:own.marginAsset)||value!==(commission?-signedUnits(own.commission):signedUnits(own.realizedPnl)))throw new Error('FUTURES_INCOME_DIFFERS_FROM_OWNED_FILL');
+        continue; // Owned executions already booked the actual commission and realized PNL.
+      }
+      const pending=state.pending;
+      const awaitingFill=pending?.market===market&&pending.args?.symbol===row.symbol&&row.time>=pending.createdAt;
+      const isSelected=scope.market===market&&scope.symbol===row.symbol;
+      if(awaitingFill||botHeldAt(history,row.time)||(tradeId===null&&(isSelected||history?.length)))throw new Error('UNRECONCILED_MANUAL_FILL_ON_MANAGED_CONTRACT');
+    }
+    external.set(key,event);
+  }
+  next.funding=[...funding.values()];
+  next.externalIncome=[...external.values()];
+  next.incomeThrough[market]=Math.max(next.incomeThrough[market],through);
+  next.externalIncomeThrough={...next.externalIncomeThrough,[market]:through};
+  return validateLedger(next);
+}
+export function addFunding(state,market,rows,through,scope){
+  if(scope)return reconcileIncome(state,market,rows,through,scope);
   if(!Array.isArray(rows)||!Number.isSafeInteger(through)||through<state.incomeThrough[market])throw new Error('COMPLETE_FUNDING_HISTORY_REQUIRED');
   const next=structuredClone(state),known=new Map(next.funding.map(row=>[row.key,row]));
   for(const row of rows){

@@ -23,10 +23,10 @@ function routes(market){
     ['account',['GET',prefix+(market==='USD_M'?'/v3/account':'/v1/account'),[],true]],
     ['balances',['GET',prefix+(market==='USD_M'?'/v3/balance':'/v1/balance'),[],true]],
     ['positionMode',['GET',prefix+'/v1/positionSide/dual',[],true]],
-    ['positions',['GET',prefix+(market==='USD_M'?'/v3/positionRisk':'/v1/positionRisk'),[],true]],
+    ['positions',['GET',prefix+(market==='USD_M'?'/v3/positionRisk':'/v1/positionRisk'),market==='USD_M'?['symbol']:[],true]],
     ['brackets',['GET',prefix+(market==='USD_M'?'/v1/leverageBracket':'/v2/leverageBracket'),['symbol'],true]],
     ['fees',['GET',prefix+'/v1/commissionRate',['symbol'],true]],
-    ['openOrders',['GET',prefix+'/v1/openOrders',[],true]],
+    ['openOrders',['GET',prefix+'/v1/openOrders',['symbol'],true]],
     ['openAlgos',['GET',prefix+'/v1/openAlgoOrders',['symbol'],true]],
     ['order',['GET',prefix+'/v1/order',['symbol','origClientOrderId','orderId'],true]],
     ['algo',['GET',prefix+'/v1/algoOrder',['algoId','clientAlgoId'],true]],
@@ -90,7 +90,13 @@ export class FuturesClient{
     const [method,path,,signed,publicOrigin]=route;
     if(name==='marginIndex'){
       if(!['USDTUSD','USDCUSD'].includes(parameters.symbol))throw new Error('INVALID_STABLECOIN_INDEX');
-    }else if(parameters.symbol!==undefined){if(publicOrigin){if(!/^[A-Z0-9]{1,24}USDT$/.test(parameters.symbol))throw new Error('INVALID_COLLATERAL_PRICE_SYMBOL');}else contractSymbol(parameters.symbol);}
+    }else if(parameters.symbol!==undefined){
+      if(publicOrigin){if(!/^[A-Z0-9]{1,24}USDT$/.test(parameters.symbol))throw new Error('INVALID_COLLATERAL_PRICE_SYMBOL');}
+      else if(name==='trades'||name==='markCandles'){
+        // External positions may include delivery contracts. Only their read endpoints accept these symbols.
+        if(typeof parameters.symbol!=='string'||!/^[\p{L}\p{N}_-]{2,64}$/u.test(parameters.symbol))throw new Error('INVALID_PERPETUAL_SYMBOL');
+      }else contractSymbol(parameters.symbol);
+    }
     if(['book','mark','fees','brackets','newOrder','newProtection','setMargin','setLeverage','order','trades','addMargin','marginHistory'].includes(name)&&!parameters.symbol)throw new Error('EXPLICIT_CONTRACT_REQUIRED');
     if(name.endsWith('Candles')||name==='candles'){
       if(parameters.interval!=='1m'||!Number.isSafeInteger(parameters.limit)||parameters.limit<1||parameters.limit>120)throw new Error('BOUNDED_MINUTE_CANDLES_REQUIRED');

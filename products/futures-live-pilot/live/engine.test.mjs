@@ -276,6 +276,63 @@ test('next UTC+8 midnight baseline is reconstructed from ledger and market histo
   const f=await fixture(t,{market:'COIN_M'});await f.engine.start(FUTURES_CONFIRMATION);await f.engine.check({execute:true});f.advance(4*3600000);await f.engine.check();const baseline=f.engine.state.day.baselineUsdt;
   assert.equal(f.engine.state.day.firstDay,false);assert.ok(f.calls.some(c=>c.name==='markCandles'));await f.engine.close();await f.engine.acquire();await f.engine.check();assert.equal(f.engine.state.day.baselineUsdt,baseline);assert.ok(f.engine.state.position);
 });
+// The exchange responses below simulate an independent manual position. All reads and
+// price changes stay inside the fixture; it has no production transport or keys.
+async function manualOvernightFixture(t){
+  const f=await fixture(t),usd=f.clients.USD_M,request=usd.request.bind(usd);
+  const symbol='外部USDT_261225',midnight=initialTime+3*3600000,closedAt=midnight+1800000;
+  const data={closed:false,hideTrades:false,pnl:'100'};
+  f.engine.settings=validateSettings({...f.settings,externalPositionPolicy:'otherContracts'});
+  usd.request=async(name,args={})=>{
+    if(name==='trades'&&args.symbol===symbol){
+      if(data.hideTrades||!data.closed||closedAt<args.startTime||closedAt>args.endTime)return [];
+      return [{symbol,id:18,qty:'5',price:'140',side:'SELL',positionSide:'BOTH',realizedPnl:'200',time:closedAt}];
+    }
+    if(name==='income'&&data.closed&&closedAt>=args.startTime&&closedAt<=args.endTime){
+      return [{incomeType:'REALIZED_PNL',symbol,tradeId:'18',tranId:69,income:'200',asset:'USDT',time:closedAt}];
+    }
+    if(name==='markCandles'&&args.symbol===symbol)return [[args.startTime,'160']];
+    const value=await request(name,args);
+    if(name==='positions'&&!data.closed)value.push({symbol,positionAmt:'5',entryPrice:'100',positionSide:'BOTH',updateTime:initialTime-10000});
+    if(name==='catalog')value.symbols.push({symbol,marginAsset:'USDT',contractType:'CURRENT_QUARTER'});
+    if(name==='account'){
+      value.assets[0].walletBalance=data.closed?'1200':'1000';
+      value.assets[0].unrealizedProfit=data.closed?'0':data.pnl;
+    }
+    return value;
+  };
+  return {f,data};
+}
+test('manual overnight PNL is included in opening equity and the account-wide daily loss stops only new entries',async t=>{
+  const {f,data}=await manualOvernightFixture(t);
+  assert.equal((await f.engine.check()).day.baselineUsdt,'1100');
+  data.pnl='0';f.advance(4*3600000);
+  const next=await f.engine.check();
+  assert.equal(next.day.baselineUsdt,'1300');assert.equal(next.day.blocked,true);assert.equal(next.plan,null);
+  assert.equal(f.engine.state.fills.length,0);assert.equal(f.calls.some(row=>row.name==='newOrder'),false);
+});
+test('after an overnight manual position closes, the account balance and the historical day baseline both reconcile',async t=>{
+  const {f,data}=await manualOvernightFixture(t);
+  await f.engine.check();data.closed=true;f.advance(4*3600000);
+  const next=await f.engine.check();
+  assert.equal(next.equityUsdt,'1200');assert.equal(next.day.baselineUsdt,'1300');assert.equal(next.day.blocked,false);
+  assert.equal(f.engine.state.externalSnapshot.positions.length,0);
+  assert.equal(f.engine.state.externalIncome.length,1);assert.equal(f.engine.state.fills.length,0);
+  assert.equal(f.calls.some(row=>row.name==='newOrder'),false);
+});
+test('incomplete manual fill history locks just the affected day and a verified next midnight recovers',async t=>{
+  const {f,data}=await manualOvernightFixture(t);
+  await f.engine.check();data.closed=true;data.hideTrades=true;f.advance(4*3600000);
+  const locked=await f.engine.check();
+  assert.equal(locked.blocker,'EXTERNAL_MIDNIGHT_HISTORY_UNVERIFIED');assert.equal(locked.day.baselineUsdt,null);
+  assert.equal(locked.plan,null);assert.equal(f.engine.state.externalSnapshot.positions.length,0);
+  data.hideTrades=false;f.advance(60000);
+  assert.equal((await f.engine.check()).day.blocked,true);
+  f.advance(86400000);
+  const recovered=await f.engine.check();
+  assert.equal(recovered.day.baselineUsdt,'1200');assert.equal(recovered.day.blocked,false);
+  assert.equal(f.calls.some(row=>row.name==='newOrder'),false);
+});
 test('collateral coin depreciation alone triggers the same daily USDT-equity entry lock',async t=>{
   const f=await fixture(t,{market:'COIN_M'});await f.engine.check();f.collateralPrice('7900');f.advance(4000);const current=await f.engine.check();assert.equal(current.equityUsdt,'790');assert.equal(current.day.blocked,true);assert.equal(current.plan,null);assert.equal(current.blocker,'DAILY_USDT_EQUITY_LOSS_20_PERCENT');
 });
