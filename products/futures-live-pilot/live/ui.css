@@ -5,3 +5,7 @@
 
 .leg-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.leg-card{padding:18px;border:1px solid #3b4b68;border-radius:10px;background:#101a2e}.leg-card p{overflow-wrap:anywhere}@media(max-width:940px){.leg-grid{grid-template-columns:1fr}}
 select,option{font:inherit}
+.wallet-check{margin-top:12px;font-variant-numeric:tabular-nums}
+.wallet-check .signal{margin:0 0 6px}
+.wallet-check summary{cursor:pointer;color:#b5c6df}
+#start-help{min-height:1.6em;margin:5px 0}

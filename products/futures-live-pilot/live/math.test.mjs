@@ -15,6 +15,17 @@ test('inverse long and short use contract value and reciprocal prices',()=>{
   assert.equal(collateralValue({...position,price:'20000'}),'0.05');
 });
 const linear={market:'USD_M',totalEquity:'1000',marginPercent:2,collateralUsdt:'1',availableCollateral:'1000',leverage:10,price:'100',stepSize:'0.01',minimumQuantity:'0.01',maximumQuantity:'10000',minimumNotional:'5',feeRate:'0.0005'};
+test('10% at 102x sizes against equity, caps to available collateral with fees, and rounds quantity down',()=>{
+  const setup={...linear,marginPercent:10,leverage:102,capToAvailable:true};
+  const full=openingQuantity(setup);
+  assert.equal(full.targetMarginUsdt,'100');assert.equal(full.initialMargin,'100');
+  assert.equal(full.notional,'10200');assert.equal(full.quantity,'102');assert.equal(full.reservedRoundTripFees,'10.2');
+  const capped=openingQuantity({...setup,availableCollateral:'35'});
+  assert.equal(capped.targetMarginUsdt,'100');assert.equal(capped.quantity,'32.39');
+  assert.equal(capped.notional,'3239');assert.equal(capped.reservedRoundTripFees,'3.239');
+  assert.ok(signedUnits(capped.initialMargin)+signedUnits(capped.reservedRoundTripFees)<=signedUnits('35'));
+  assert.throws(()=>openingQuantity({...setup,availableCollateral:'0.001'}),/MARGIN_BUDGET_BELOW_CONTRACT_MINIMUM_OR_FILTER/);
+});
 test('selected 2% INITIAL MARGIN gives 20 collateral and 200 notional at 10x',()=>{
   const p=openingQuantity(linear);assert.equal(p.targetMarginUsdt,'20');assert.equal(p.initialMargin,'20');assert.equal(p.notionalUsdt,'200');assert.equal(p.quantity,'2');assert.equal(p.reservedRoundTripFees,'0.2');
   const x=openingQuantity({...linear,leverage:20});assert.equal(x.initialMargin,'20');assert.equal(x.notionalUsdt,'400');

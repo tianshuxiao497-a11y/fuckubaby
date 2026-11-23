@@ -13,7 +13,9 @@ import {acquireProfileLease} from '../../../lib/profile-lease.mjs';
 export const FUTURES_VERSION='0.3.0-personal';
 export function validateSettings(value){
   const keys=['market','symbol','assetMode','marginMode','leverage','marginPercent','directionMode','dailyLossPercent','externalStrategy','positionPolicy','externalMarginPolicy','externalPositionPolicy'];
-  if(!value||Object.keys(value).some(k=>!keys.includes(k))||!['USD_M','COIN_M'].includes(value.market)||!['CROSSED','ISOLATED'].includes(value.marginMode)||!Number.isSafeInteger(value.leverage)||value.leverage<1||value.leverage>1000||typeof value.marginPercent!=='number'||!Number.isFinite(value.marginPercent)||value.marginPercent<1||value.marginPercent>2||!['both','long','short'].includes(value.directionMode)||value.dailyLossPercent!==20)throw new Error('EXPLICIT_FUTURES_MARGIN_LEVERAGE_AND_RISK_REQUIRED');
+  if(!value||Object.keys(value).some(k=>!keys.includes(k))||!['USD_M','COIN_M'].includes(value.market)||!['CROSSED','ISOLATED'].includes(value.marginMode)||!Number.isSafeInteger(value.leverage)||value.leverage<1||value.leverage>1000||!['both','long','short'].includes(value.directionMode)||value.dailyLossPercent!==20)throw new Error('EXPLICIT_FUTURES_MARGIN_LEVERAGE_AND_RISK_REQUIRED');
+  const percent=value.marginPercent;
+  if(typeof percent!=='number'||!Number.isFinite(percent)||percent<0.01||percent>100||!/^\d+(?:\.\d{1,12})?$/.test(String(percent)))throw new Error('INVALID_FUTURES_MARGIN_PERCENT');
   contractSymbol(value.symbol);
   if(value.positionPolicy!==undefined&&!['single','hedge'].includes(value.positionPolicy))throw new Error('EXPLICIT_POSITION_POLICY_REQUIRED');
   const externalPositionPolicy=value.externalPositionPolicy===undefined?'block':value.externalPositionPolicy;
@@ -51,6 +53,7 @@ function matchesOwnedPosition(row,position,verifyEntry){
 }
 
 export class FuturesEngine{
+  stopGeneration=0;
   constructor({profile,clients,settings,now=Date.now,guard=()=>true,signalFactory=futuresSignal}){
     this.profile=resolve(profile);this.file=resolve(this.profile,'futures-ledger.json');this.clients=clients;this.settings=validateSettings(settings);this.now=now;this.guard=guard;this.signalFactory=signalFactory;this.running=false;this.autoMarginArmed=false;this.busy=false;this.state=null;this.last=null;this.error=null;this.cache=new Map();
     if(!clients?.USD_M||!clients?.COIN_M)throw new Error('BOTH_FUTURES_CLIENTS_REQUIRED');
@@ -70,7 +73,7 @@ export class FuturesEngine{
     return this;
   }
   async commit(state){validateLedger(state);await atomicWriteJson(this.file,state);this.state=state;}
-  stop(){this.running=false;this.autoMarginArmed=false;for(const client of Object.values(this.clients))client.disarm();}
+  stop(){this.stopGeneration++;this.running=false;this.autoMarginArmed=false;for(const client of Object.values(this.clients))client.disarm();this.syncLastState();}
   stopAutoMargin(){this.autoMarginArmed=false;for(const client of Object.values(this.clients))client.disarmMargin?.();}
   async close(){this.stop();if(this.lock){await this.lock.close();this.lock=null;await unlink(this.lockPath).catch(()=>{});}if(this.socket){await new Promise(ok=>this.socket.close(ok));this.socket=null;}}
   async cached(key,ttl,read){const old=this.cache.get(key);if(old&&this.now()>=old.time&&this.now()-old.time<ttl)return old.value;const value=await read();this.cache.set(key,{time:this.now(),value});return value;}
@@ -460,9 +463,18 @@ export class FuturesEngine{
   }
   armTrading(){for(const client of Object.values(this.clients))client.arm(FUTURES_CONFIRMATION);this.running=true;}
   async start(confirmation){
-    if(confirmation!==FUTURES_CONFIRMATION)throw new Error('EXPLICIT_FUTURES_START_REQUIRED');await this.check();if(this.state.pending)throw new Error('RECONCILE_PENDING_FUTURES_RESULT_FIRST');if(this.state.hedgeLock?.active)throw new Error('MANUAL_HEDGE_LOCK_STRATEGY_PAUSED');
+    if(confirmation!==FUTURES_CONFIRMATION)throw new Error('EXPLICIT_FUTURES_START_REQUIRED');
+    const generation=this.stopGeneration;
+    await this.check();if(this.state.pending)throw new Error('RECONCILE_PENDING_FUTURES_RESULT_FIRST');if(this.state.hedgeLock?.active)throw new Error('MANUAL_HEDGE_LOCK_STRATEGY_PAUSED');
     if(!this.last.actualConfigurationMatches)throw new Error('APPLY_SELECTED_CONTRACT_SETTINGS_FIRST');if(this.settings.positionPolicy==='hedge'&&!this.last.hedge)throw new Error('ENABLE_EXCHANGE_HEDGE_MODE_FIRST');if(this.last.configuration.marginMode==='ISOLATED'&&this.last.configuration.autoAddMargin===true)throw new Error('ISOLATED_AUTO_ADD_MARGIN_MUST_BE_DISABLED');if(this.state.day.blocked&&!ownedPositions(this.state).length)throw new Error('DAILY_USDT_EQUITY_LOSS_20_PERCENT');
-    if(!this.guard())throw new Error('FUTURES_START_AUTHORIZATION_REQUIRED');this.armTrading();try{await this.ensureProtections();}catch(error){this.stop();throw error;}this.syncLastState();return this.last;
+    if(!this.guard())throw new Error('FUTURES_START_AUTHORIZATION_REQUIRED');
+    if(generation!==this.stopGeneration)throw new Error('FUTURES_START_CANCELLED');
+    this.armTrading();
+    try{
+      await this.ensureProtections();
+      if(generation!==this.stopGeneration)throw new Error('FUTURES_START_CANCELLED');
+    }catch(error){this.stop();throw error;}
+    this.syncLastState();return this.last;
   }
   async applyContractSettings(confirmation){
     if(confirmation!==SETTINGS_CONFIRMATION)throw new Error('EXPLICIT_MARGIN_AND_LEVERAGE_CONFIRMATION_REQUIRED');if(this.busy||this.running||this.state?.pending||ownedPositions(this.state).length)throw new Error('FLAT_STOPPED_ACCOUNT_REQUIRED_FOR_SETTINGS');this.busy=true;

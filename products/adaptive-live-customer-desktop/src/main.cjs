@@ -28,7 +28,7 @@ app.whenReady().then(async()=>{
   runtime=await createCustomerWorkbench(selfTestRoot?{profile:path.join(selfTestRoot,'customer-profile'),spot:{clientFactory:fakeFactory},futures:{clientFactory:fakeFactory}}:{profile:path.join(app.getPath('userData'),'profile'),loadSavedLicense,saveLicense,licenseOptions:{fetchImpl:(url,options)=>{if(url!==licenseConfig.endpoint)return Promise.reject(new Error('FIXED_LICENSE_SERVICE_REQUIRED'));return net.fetch(url,options);}}});
   const endpoint=new URL(runtime.url),allowed=new Set(runtime.origins),ownUrl=value=>{try{return allowed.has(new URL(value).origin);}catch{return false;}};
   session.defaultSession.webRequest.onBeforeRequest({urls:['http://*/*','https://*/*']},(details,callback)=>callback({cancel:!ownUrl(details.url)&&details.url!==licenseConfig.endpoint}));
-  window=new BrowserWindow({width:1440,height:1000,minWidth:1000,minHeight:740,show:false,backgroundColor:'#0b1020',title:'Adaptive Trading Bot Live · Customer 0.3.4',webPreferences:{contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
+  window=new BrowserWindow({width:1440,height:1000,minWidth:1000,minHeight:740,show:false,backgroundColor:'#0b1020',title:'Adaptive Trading Bot Live · Customer 0.3.5',webPreferences:{contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
   window.removeMenu();window.webContents.setWindowOpenHandler(()=>({action:'deny'}));window.webContents.on('will-navigate',(event,url)=>{if(!ownUrl(url))event.preventDefault();});
   powerMonitor.on('suspend',()=>runtime?.stop());
   await window.loadURL(runtime.url);window.show();
@@ -45,7 +45,7 @@ app.whenReady().then(async()=>{
       }
       const renderer={};for(const [key,frame] of Object.entries(frames)){renderer[key]=await frame.executeJavaScript('({startDisabled:document.getElementById("start").disabled,nodeDisabled:typeof require==="undefined",externalImport:!!document.getElementById("strategy-file")})');if(!renderer[key].startDisabled||!renderer[key].nodeDisabled||!renderer[key].externalImport)throw new Error('WORKSPACE_INITIAL_SAFETY_STATE_FAILED');}
       const workspaceStatus=runtime.status();
-      if([workspaceStatus,workspaceStatus.spot,workspaceStatus.futures].some(state=>state?.edition!=='customer'||state.version!=='0.3.4-customer'))throw new Error('CUSTOMER_WORKSPACE_VERSION_MISMATCH');
+      if([workspaceStatus,workspaceStatus.spot,workspaceStatus.futures].some(state=>state?.edition!=='customer'||state.version!=='0.3.5-customer'))throw new Error('CUSTOMER_WORKSPACE_VERSION_MISMATCH');
       for(const [key,phrase,header] of [['spot','START REAL SPOT TRADING','x-asbl-session'],['futures','START REAL FUTURES TRADING','x-asbf-session']]){const url=new URL(pages[key]),r=await fetch(url.origin+'/api/start',{method:'POST',headers:{[header]:url.hash.slice(1),Origin:url.origin,'Content-Type':'application/json'},body:JSON.stringify({confirmation:phrase})});if(r.status!==403)throw new Error('UNLICENSED_START_NOT_BLOCKED');}
       if(exchangeRequests)throw new Error('UNEXPECTED_REAL_ACCOUNT_CALL');
       await window.webContents.executeJavaScript('document.getElementById("spot-tab").click()');await screenshot('SPOT-PREVIEW.png');
@@ -79,10 +79,46 @@ app.whenReady().then(async()=>{
         return {defaultBlocks,saved,restored};
       })()`);
       if(!externalPositions.defaultBlocks||!externalPositions.saved||!externalPositions.restored)throw new Error('EXTERNAL_POSITION_POLICY_UI_FAILED');
+      const draft=await future.executeJavaScript(`(()=>{
+        fillSettings(${JSON.stringify(synthetic)});
+        for(const [id,value] of [['percent','10'],['leverage','102']]){
+          const field=document.getElementById(id);
+          field.value=value;
+          field.dispatchEvent(new Event('input',{bubbles:true}));
+        }
+        if(!editing||inputError())throw new Error('NATIVE_SETTINGS_DRAFT_REJECTED');
+        return savedForm().settings;
+      })()`);
+      const vault=await import(pathToFileURL(path.join(root,'products/spot-live-pilot/live/vault.mjs')).href);
+      const {validateSettings}=await import(pathToFileURL(path.join(root,'products/futures-live-pilot/live/engine.mjs')).href);
+      const fixturePath=path.join(selfTestRoot,'offline-settings-'+require('node:crypto').randomUUID()+'.json');
+      const fixturePassword=require('node:crypto').randomBytes(24).toString('hex');
+      let restored;
+      try{
+        await vault.saveVault(fixturePath,{settings:validateSettings(draft)},fixturePassword);
+        restored=validateSettings((await vault.loadVault(fixturePath,fixturePassword)).settings);
+      }finally{await fs.unlink(fixturePath).catch(error=>{if(error.code!=='ENOENT')throw error;});}
+      const display=structuredClone(synthetic);
+      display.settings=restored;
+      display.snapshot.configuration.leverage=150;
+      display.snapshot.actualConfigurationMatches=false;
+      const settingsRoundTrip=await future.executeJavaScript(`(()=>{
+        const state=${JSON.stringify(display)};
+        fillSettings(state);nativeFixtureRender(state);
+        const get=id=>document.getElementById(id);
+        return {
+          restored:get('percent').value==='10'&&get('leverage').value==='102'&&!editing,
+          localTarget:get('saved-settings').textContent.includes('10%')&&get('saved-settings').textContent.includes('102×'),
+          exchangeValue:get('actual-settings').textContent.includes('150×')&&!get('actual-settings').textContent.includes('102×'),
+          summaryVisible:get('wallet-summary').textContent.includes('设置待应用'),
+          detailsCollapsed:get('wallet-details').closest('details')?.open===false
+        };
+      })()`);
+      if(!Object.values(settingsRoundTrip).every(Boolean))throw new Error('NATIVE_FUTURES_SETTINGS_ROUND_TRIP_FAILED_'+JSON.stringify(settingsRoundTrip));
       await screenshot('FUTURES-MARGIN-OFFLINE.png');
       const template=await (await fetch(new URL('/example-auto-margin.json',pages.futures))).json();if(template.enabled||template.perAdditionAmount!=='0'||template.maxTotalAmount!=='0')throw new Error('NO_DEFAULT_AUTO_MARGIN_SPENDING_ALLOWED');
       if(runtime.status().spot.running||runtime.status().futures.running||runtime.status().futures.autoMarginArmed||exchangeRequests)throw new Error('NATIVE_SELF_TEST_STARTED_TRADING');
-      await fs.writeFile(path.join(selfTestRoot,'RESULT.json'),JSON.stringify({passed:true,version:'0.3.4-customer',platform:process.platform,arch:process.arch,electron:process.versions.electron,uiFontLoaded:true,twoWorkspaces:true,renderer,legs,margin,assetModes,externalPositions,syntheticInterfaceOnly:true,unconfiguredStartBlocked:true,realAccountReads:0,exchangeOrders:0,customerSubscriptionIntegrated:true,unlicensedStartBlocked:true},null,2));await shutdown();
+      await fs.writeFile(path.join(selfTestRoot,'RESULT.json'),JSON.stringify({passed:true,version:'0.3.5-customer',platform:process.platform,arch:process.arch,electron:process.versions.electron,uiFontLoaded:true,twoWorkspaces:true,renderer,legs,margin,assetModes,externalPositions,settingsRoundTrip,syntheticInterfaceOnly:true,unconfiguredStartBlocked:true,realAccountReads:0,exchangeOrders:0,customerSubscriptionIntegrated:true,unlicensedStartBlocked:true},null,2));await shutdown();
     }catch(error){await fs.writeFile(path.join(selfTestRoot,'FAILED.txt'),String(error?.stack??safeError(error)));runtime.stop();await runtime.close();window.destroy();app.exit(1);}return;
   }
   window.on('close',async event=>{if(closing)return;event.preventDefault();const state=runtime.status();runtime.stop();const active=[state.spot,state.futures].some(s=>s.running||s.autoMarginArmed||s.pending||s.snapshot?.position||Object.values(s.snapshot?.positions??{}).some(Boolean));if(active){const result=await dialog.showMessageBox(window,{type:'question',buttons:['返回工作台','停止后退出'],defaultId:0,cancelId:0,title:'退出真实资金工作台',message:'交易策略与本机自动追加均已停止。退出后不会继续本机持仓管理。',detail:'现货持仓和合约多空仓位不会自动平掉；已确认的交易所保护单保留，请在币安核对。'});if(result.response!==1)return;}await shutdown();});

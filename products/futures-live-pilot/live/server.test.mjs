@@ -1,16 +1,73 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm,readFile} from 'node:fs/promises';
+import {mkdtemp,rm,readFile,writeFile} from 'node:fs/promises';
+import {setTimeout as delay} from 'node:timers/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createFuturesServer} from './server.mjs';
 import {loadVault} from '../../spot-live-pilot/live/vault.mjs';
+import {fakeExchange} from './testing/fake-exchange.mjs';
 import {request} from 'node:http';
 const password='fabricated-password-12345',settings={market:'USD_M',symbol:'BTCUSDT',marginMode:'ISOLATED',leverage:5,marginPercent:1,directionMode:'both',dailyLossPercent:20,externalStrategy:null};
 async function fixture(t,makeClients){const profile=await mkdtemp(join(tmpdir(),'asbf-server-')),calls=[];const app=await createFuturesServer({profile,pollMs:100000,clientFactory:makeClients??(()=>Object.fromEntries(['USD_M','COIN_M'].map(market=>[market,{disarm(){},request(name){calls.push({market,name});if(name==='catalog')return {symbols:[]};throw new Error('NO_EXCHANGE_ACCESS_IN_SERVER_TEST');}}])))});
   t.after(async()=>{await app.close();await rm(profile,{recursive:true,force:true});});const url=new URL(app.url),headers={'x-asbf-session':url.hash.slice(1),Origin:url.origin,'Content-Type':'application/json'};
   return {app,profile,calls,url,async get(path,override={}){return fetch(url.origin+path,{headers:{...headers,...override}});},async post(name,body={},override={}){const response=await fetch(url.origin+'/api/'+name,{method:'POST',headers:{...headers,...override},body:JSON.stringify(body)});return {status:response.status,value:await response.json()};}};
 }
+test('an unwriteable vault keeps the previous config and cannot leave a larger unsaved allocation active',async t=>{
+  const f=await fixture(t),credentials={apiKey:'fabricated-api',apiSecret:'fabricated-secret'};
+  const saved=await f.post('save',{credentials,password,passwordRepeat:password,settings,preferences:{autoConnect:false}});
+  assert.equal(saved.status,200);
+  const path=join(f.profile,'futures-vault.json'),before=await readFile(path);
+  // The vault must back up its previous encrypted file before it can replace it.
+  await writeFile(join(f.profile,'backups'),'occupied by a regular file',{flag:'wx'});
+  const failed=await f.post('settings',{password,settings:{...settings,marginPercent:10,leverage:102},preferences:{autoConnect:true}});
+  assert.equal(failed.status,400);
+  assert.equal(failed.value.error,'FUTURES_SETTINGS_NOT_SAVED_UNLOCK_PREVIOUS');
+  assert.deepEqual(await readFile(path),before);
+  assert.equal(f.app.status().unlocked,false);
+  assert.equal(f.app.status().settings,null);
+  assert.equal(f.app.status().preferences.autoConnect,false);
+  assert.equal((await f.post('start',{confirmation:'START REAL FUTURES TRADING'})).value.error,'SAVE_OR_UNLOCK_FUTURES_CONFIGURATION');
+  const restored=await f.post('unlock',{password});
+  assert.equal(restored.status,200);
+  assert.equal(restored.value.settings.marginPercent,settings.marginPercent);
+  assert.equal(restored.value.settings.leverage,settings.leverage);
+  assert.deepEqual(f.calls,[]);
+});
+
+for(const interrupt of [false,true])test('a manual restart during a background read '+(interrupt?'honors a newer stop':'waits for the read and can start again'),async t=>{
+  const exchange=await fakeExchange(t,{hedge:false,positionPolicy:'single'});
+  const f=await fixture(t,()=>exchange.clients),confirmation='START REAL FUTURES TRADING';
+  const initial=await f.post('save',{password,passwordRepeat:password,credentials:{apiKey:'fake',apiSecret:'fake-secret'},settings:exchange.settings,preferences:{autoConnect:true}});
+  assert.equal(initial.status,200);
+  assert.equal((await f.post('start',{confirmation})).value.running,true);
+  assert.equal((await f.post('stop')).value.running,false);
+  let entered,release;
+  const beganReading=new Promise(resolve=>{entered=resolve;});
+  const readGate=new Promise(resolve=>{release=resolve;});
+  const dollar=exchange.clients.USD_M,request=dollar.request.bind(dollar);
+  let paused=false;
+  dollar.request=async(name,args)=>{
+    if(!paused&&name==='account'){paused=true;entered();await readGate;}
+    return request(name,args);
+  };
+  const monitoring=f.app.monitor();
+  let restarting;
+  try{
+    await Promise.race([beganReading,monitoring.then(()=>{throw new Error('Expected the offline account read to wait');})]);
+    restarting=f.post('start',{confirmation});
+    for(let i=0;i<300&&!f.app.status().logs.some(row=>row.event==='FUTURES_START_WAITING_FOR_ACCOUNT_CHECK');i++)await delay(10);
+    assert.ok(f.app.status().logs.some(row=>row.event==='FUTURES_START_WAITING_FOR_ACCOUNT_CHECK'));
+    if(interrupt)assert.equal((await f.post('stop')).status,200);
+  }finally{release();}
+  await monitoring;
+  const result=await restarting;
+  if(interrupt){assert.equal(result.status,400);assert.equal(result.value.error,'FUTURES_START_CANCELLED');}
+  else assert.equal(result.status,200);
+  assert.equal(f.app.status().running,!interrupt);
+  assert.equal(exchange.calls.some(row=>['newOrder','newProtection','setLeverage','setMargin'].includes(row.name)),false);
+});
+
 test('local session, Host and Origin protections reject unauthorised actions with no exchange access',async t=>{
   const f=await fixture(t);assert.equal((await f.get('/api/status',{'x-asbf-session':'wrong'})).status,403);
   const hostStatus=await new Promise((ok,bad)=>{const req=request(f.url.origin+'/api/status',{headers:{Host:'attacker.invalid','x-asbf-session':f.url.hash.slice(1)}},res=>{res.resume();ok(res.statusCode);});req.on('error',bad);req.end();});assert.equal(hostStatus,403);
@@ -43,6 +100,22 @@ test('invalid external strategy and wrong password preserve saved settings; loca
   const before=await readFile(join(f.profile,'futures-vault.json'),'utf8');assert.equal((await f.post('strategy',{password,text:'{"code":"run"}'})).status,400);assert.equal(await readFile(join(f.profile,'futures-vault.json'),'utf8'),before);
   assert.equal((await f.post('settings',{password:'wrong-password-long',settings:{...settings,marginPercent:2},preferences:{autoConnect:false}})).status,400);assert.equal(await readFile(join(f.profile,'futures-vault.json'),'utf8'),before);
   assert.equal((await f.post('settings',{password,settings:{...settings,marginPercent:2},preferences:{autoConnect:false}})).status,200);assert.equal((await loadVault(join(f.profile,'futures-vault.json'),password)).settings.marginPercent,2);assert.equal(f.calls.length,0);
+});
+test('changing 1% and 150x to 10% and 102x survives lock and unlock without changing the exchange',async t=>{
+  const f=await fixture(t),preferences={autoConnect:false};
+  const initial=await f.post('save',{credentials:{apiKey:'fake',apiSecret:'fake-secret'},password,passwordRepeat:password,settings:{...settings,leverage:150},preferences});
+  assert.equal(initial.status,200);
+  const changed={...settings,marginPercent:10,leverage:102},file=join(f.profile,'futures-vault.json');
+  const saved=await f.post('settings',{password,settings:changed,preferences});
+  assert.equal(saved.status,200);assert.equal(saved.value.settings.marginPercent,10);assert.equal(saved.value.settings.leverage,102);
+  const persisted=await readFile(file,'utf8');
+  const invalid=await f.post('settings',{password,settings:{...changed,marginPercent:100.01},preferences});
+  assert.equal(invalid.status,400);assert.equal(invalid.value.error,'INVALID_FUTURES_MARGIN_PERCENT');
+  assert.equal(await readFile(file,'utf8'),persisted);
+  assert.equal((await f.post('lock')).status,200);
+  const unlocked=await f.post('unlock',{password});
+  assert.equal(unlocked.status,200);assert.equal(unlocked.value.settings.marginPercent,10);assert.equal(unlocked.value.settings.leverage,102);
+  assert.equal(unlocked.value.settings.dailyLossPercent,20);assert.deepEqual(f.calls,[]);
 });
 test('read-only connection failure stops strategy and preserves encrypted configuration for retry',async t=>{
   const f=await fixture(t);await f.post('save',{credentials:{apiKey:'fake',apiSecret:'fake-secret'},password,passwordRepeat:password,settings,preferences:{autoConnect:true}});await f.app.monitor();assert.equal(f.app.status().running,false);assert.equal(f.app.status().reconnecting,true);assert.equal((await loadVault(join(f.profile,'futures-vault.json'),password)).credentials.apiKey,'fake');

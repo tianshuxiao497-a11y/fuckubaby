@@ -20,7 +20,7 @@ Save and perform a read-only check before personally typing `START REAL SPOT TRA
 
 In Futures → Connection & risk, use your own mainnet Futures API Key with either HMAC Secret or matching RSA PEM. The Spot Ed25519 PEM is not a Futures RSA PEM. Both Futures wallets must be readable. In Connection & risk, select the USD-M asset mode shown by Binance, save and run the read-only check. Single-Asset works for USDT-funded USDT contracts. To share eligible collateral across assets, select Multi-Assets and Cross. Binance determines collateral eligibility and valuation. The available margin shown in USDT equivalent already accounts for positions and open orders. Order sizing also considers the configured percentage, fees and minimum order size. The selector saves a local preference. Change the account-wide asset mode in Binance USD-M Futures settings if needed. Portfolio Margin is unsupported. Withdrawal permission is not needed.
 
-Select USD-M USDT/USDC linear perpetuals or COIN-M inverse perpetuals, read current exchange settings, choose margin/leverage/allocation and save the local configuration. To change the selected contract's cross/isolated mode or leverage, first stop, be flat and reconcile orders. Save the selection, type `APPLY FUTURES SETTINGS`, then click apply. Typing alone does not submit anything.
+Select USD-M USDT/USDC linear perpetuals or COIN-M inverse perpetuals, read current exchange settings, choose margin/leverage/allocation and save the local configuration. In Workspace, compare the settings saved locally with the last settings read from Binance. If the saved leverage is 102× and Binance still reports 150×, stop the strategy and check that the selected contract is flat with no outstanding orders. Type `APPLY FUTURES SETTINGS` and click the button to apply the selected mode and leverage to Binance. Run the read-only check again. The modes and leverage must match to start. Multi-Assets requires Cross. Manual positions on other contracts can remain open when coexistence is enabled.
 
 Single-position management holds one direction at a time. Dual-leg management permits one long and one short on the selected perpetual, with independent entry/exit decisions and exchange protection. Changing contract, family or trading strategy requires stopped, flat and reconciled state.
 
@@ -36,6 +36,8 @@ The default setting pauses on external positions. Existing configurations keep t
 
 ## Trading and manual equal hedge
 
+After stopping, enter `START REAL FUTURES TRADING` again to restart monitoring. The strategy can wait for a signal. If a particular order is below the minimum, it skips that entry.
+
 Type `START REAL FUTURES TRADING` to start. Long and short quantities, entry prices, protection and liquidation prices are shown separately. Each leg has its own stop and close action. Market-close actions require the trading confirmation and affect only the selected reconciled bot-owned direction.
 
 For manual equal hedging, click the read-only preview. Review direction, quantity difference, initial margin and notional. Type `LOCK FUTURES POSITION` and submit. Trading pauses before account review; the smaller leg is increased by the quantity difference, subject to existing funds, chosen initial-margin budget, venue filters, leverage brackets and daily entry lock. It does not silently enlarge the budget to achieve equality.
@@ -44,7 +46,7 @@ IOC orders may fill partially. Partial coverage is shown accurately and is not b
 
 ## Allocation, costs and daily guard
 
-Each new leg's initial-margin budget is 1%–2% of the combined Futures-wallet equity in USDT, default 1%. This is not notional exposure. Leverage enlarges notional; two legs occupy funds separately and are not netted to zero for sizing. Below-minimum allocations are rejected. Cross margin may use other available matching collateral and initial margin is not a guaranteed loss cap.
+Each new leg uses a configurable initial-margin percentage from 0.01% to 100%, with a 1% default. For example, enter 10 for an initial-margin budget of 10% of equity. Available margin, fees and contract minimums still apply. Leverage enlarges notional; two legs occupy funds separately and are not netted to zero for sizing. Below-minimum allocations are rejected. Cross margin may use other available matching collateral and initial margin is not a guaranteed loss cap.
 
 Equity includes both legs' unrealized PNL, actual commissions, funding and collateral-coin price changes. Slippage is embedded in actual fill prices, not debited twice. The daily boundary is midnight UTC+8; on the first day, equity at app-ledger creation is used. A decline of more than 20% blocks new long/short entries, new hedge legs and automatic margin additions for that day. Owned positions may still reduce/close, and additional manual margin requires personal confirmation. The threshold does not guarantee a maximum 20% loss.
 

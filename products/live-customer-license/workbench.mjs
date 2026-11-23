@@ -6,7 +6,7 @@ import {createLiveServer} from '../spot-live-pilot/live/server.mjs';
 import {createFuturesServer} from '../futures-live-pilot/live/server.mjs';
 import {createLicenseManager} from './license-device.mjs';
 
-export const VERSION='0.3.4-customer';
+export const VERSION='0.3.5-customer';
 const here=new URL('./',import.meta.url);
 export async function createCustomerWorkbench({profile,port=0,spot={},futures={},licenseOptions={},
   licenseFactory=createLicenseManager,loadSavedLicense=async()=>'',saveLicense=async()=>false}={}){

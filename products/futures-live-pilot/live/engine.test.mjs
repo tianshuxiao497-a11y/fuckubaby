@@ -7,6 +7,13 @@ import {FuturesEngine,validateSettings} from './engine.mjs';
 import {FUTURES_CONFIRMATION,SETTINGS_CONFIRMATION} from './client.mjs';
 import {units,signedUnits,decimal,multiply,pnl} from './math.mjs';
 const initialTime=Date.UTC(2026,10,17,13);
+test('initial margin accepts 0.01–100% and preserves the fixed daily limit and leverage checks',()=>{
+  const settings={market:'USD_M',symbol:'BTCUSDT',marginMode:'ISOLATED',leverage:102,directionMode:'both',dailyLossPercent:20};
+  for(const marginPercent of [0.01,0.125,1,2,10,99.99,100])assert.equal(validateSettings({...settings,marginPercent}).marginPercent,marginPercent);
+  for(const marginPercent of [undefined,'10',null,NaN,Infinity,-1,0,0.009,0.0199999999999995,100.01])assert.throws(()=>validateSettings({...settings,marginPercent}),/^Error: INVALID_FUTURES_MARGIN_PERCENT$/);
+  assert.throws(()=>validateSettings({...settings,marginPercent:10,leverage:1.5}),/EXPLICIT_FUTURES_MARGIN_LEVERAGE_AND_RISK_REQUIRED/);
+  assert.throws(()=>validateSettings({...settings,marginPercent:10,dailyLossPercent:99}),/EXPLICIT_FUTURES_MARGIN_LEVERAGE_AND_RISK_REQUIRED/);
+});
 async function fixture(t,{market='USD_M',direction='LONG',hedge=false,timeout=false,reject=false,unmanaged=false,algoUnsupported=false,usdBalance='1000'}={}){
   const profile=await mkdtemp(join(tmpdir(),'asbf-engine-'));let clock=initialTime,forceClose=false,sequence=100,protection=null,collateralPrice='10000';
   const cash={USD_M:{USDT:market==='USD_M'?usdBalance:'0'},COIN_M:{BTC:market==='COIN_M'?'0.1':'0'}};
@@ -81,6 +88,30 @@ for(const market of ['USD_M','COIN_M'])for(const direction of ['LONG','SHORT'])t
   await f.engine.start(FUTURES_CONFIRMATION);await f.engine.check({execute:true});
   assert.equal(f.engine.state.position.direction,direction);assert.ok(f.engine.state.protection);assert.equal(f.engine.state.orders.length,1);
   f.forceClose();await f.engine.check({execute:true});assert.equal(f.engine.state.position,null);assert.equal(f.engine.state.protection,null);assert.equal(f.engine.state.orders.length,2);
+});
+test('manual stop immediately updates the snapshot; a confirmed restart keeps an existing stop and never duplicates the entry',async t=>{
+  const f=await fixture(t);await f.engine.start(FUTURES_CONFIRMATION);await f.engine.check({execute:true});
+  const stopId=f.engine.state.protection.id;
+  f.engine.stop();
+  assert.equal(f.engine.running,false);assert.equal(f.engine.last.running,false);
+  await assert.rejects(f.engine.start(''),/EXPLICIT_FUTURES_START_REQUIRED/);
+  await f.engine.start(FUTURES_CONFIRMATION);
+  assert.equal(f.engine.running,true);assert.equal(f.engine.last.running,true);assert.equal(f.engine.state.protection.id,stopId);
+  assert.equal(f.calls.filter(call=>call.name==='newOrder').length,1);
+  assert.equal(f.calls.filter(call=>call.name==='newProtection').length,1);
+});
+test('stopping during a restart verification cancels that start; a later explicit start still succeeds',async t=>{
+  const f=await fixture(t),client=f.clients.USD_M,request=client.request.bind(client);
+  let entered,resume;
+  const reading=new Promise(resolve=>{entered=resolve;}),release=new Promise(resolve=>{resume=resolve;});
+  await f.engine.start(FUTURES_CONFIRMATION);f.engine.stop();
+  client.request=async(name,args)=>{if(name==='account'){entered();await release;}return request(name,args);};
+  const starting=f.engine.start(FUTURES_CONFIRMATION);
+  await reading;f.engine.stop();resume();
+  await assert.rejects(starting,/FUTURES_START_CANCELLED/);
+  assert.equal(f.engine.running,false);assert.equal(client.armed,false);
+  const started=await f.engine.start(FUTURES_CONFIRMATION);
+  assert.equal(started.running,true);assert.equal(f.calls.some(call=>call.name==='newOrder'),false);
 });
 test('five USDT and the USD-M V3 account response pass read-only checks; missing trading permission still blocks readiness',async t=>{
   const {engine,clients,calls}=await fixture(t,{usdBalance:'5'});

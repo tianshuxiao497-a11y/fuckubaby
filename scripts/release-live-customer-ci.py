@@ -16,7 +16,7 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-version = "0.3.4"
+version = "0.3.5"
 tag = f"v{version}-live-customer"
 repo = os.environ["GITHUB_REPOSITORY"]
 commit = os.environ["GITHUB_SHA"]
@@ -37,6 +37,7 @@ for runner, platform, arch, native_os in [
     path = directory / name
     assert (report["version"], report["platform"], report["arch"], report["file"]) == (version+"-customer", platform, arch, name)
     assert report["nativeSelfTestPassed"] and report["customerSubscriptionIntegrated"]
+    assert report["futuresSettingsRoundTripVerified"] is True
     assert report["actualCredentialsUsed"] is False and report["realOrdersSubmitted"] == 0
     assert path.stat().st_size == report["bytes"] and digest(path) == report["sha256"]
     with zipfile.ZipFile(path) as archive:
@@ -49,6 +50,7 @@ for runner, platform, arch, native_os in [
         assert (native["version"], native["platform"], native["arch"]) == (report["version"], native_os, arch)
         assert native["passed"] and native["assetModes"] == {"single": True, "multi": True, "cross": True}
         assert native["externalPositions"] == {"defaultBlocks": True, "saved": True, "restored": True}
+        assert all(native["settingsRoundTrip"].get(key) is True for key in ("restored","localTarget","exchangeValue","summaryVisible","detailsCollapsed"))
         assert native["unlicensedStartBlocked"] and native["realAccountReads"] == native["exchangeOrders"] == 0
     if platform == "Linux":
         qa_dir = root / f"live-customer-desktop-031-qa-{runner}-{arch}"
@@ -56,6 +58,7 @@ for runner, platform, arch, native_os in [
         installed_qa = json.loads(installed.read_text())
         assert installed_qa["passed"] and installed_qa["assetModes"] == native["assetModes"]
         assert installed_qa["externalPositions"] == native["externalPositions"]
+        assert installed_qa["settingsRoundTrip"] == native["settingsRoundTrip"]
     packages[name] = path
     reports.append(report)
 
@@ -69,7 +72,7 @@ if existing:
 else:
     gh("release", "create", tag, "--target", commit, "--draft", "--prerelease", "--title",
        f"Adaptive Trading Bot Live {version}", "--notes",
-       "Keep manual positions on other futures contracts and use exchange-reported available margin for bot orders. Windows, Linux and both Mac builds passed offline native checks.")
+       "Save a custom futures margin budget and leverage, then compare the saved target with the latest exchange reading. Manual stop and restart have been revised. Windows, Linux and both Mac builds passed offline native checks.")
 release_id = gh("release", "view", tag, "--json", "databaseId", "--jq", ".databaseId")
 def assets():
     return {a["name"]: a for a in json.loads(gh("api", f"repos/{repo}/releases/{release_id}/assets"))}

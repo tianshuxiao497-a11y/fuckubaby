@@ -33,18 +33,29 @@ export async function createFuturesServer({profile=defaultProfile(),port=0,now=D
   if(!Number.isSafeInteger(pollMs)||pollMs<20)throw new Error('INVALID_FUTURES_MONITOR_INTERVAL');
   const token=randomBytes(32).toString('hex'),vaultPath=resolve(profile,'futures-vault.json');let origin,engine=null,secret=null,settings=null,prefs={autoConnect:false},closing=false,actionBusy=false,nextCheck=Infinity,failures=0;
   let vaultExists=await lstat(vaultPath).then(()=>true,e=>{if(e.code==='ENOENT')return false;throw e;});
-  let monitorRead=null;
+  let monitorRead=null,stopGeneration=0;
   const logs=[];const record=(event,code=null)=>{logs.push({time:now(),event,code});if(logs.length>200)logs.shift();};
+  function stop(){stopGeneration++;engine?.stop();record('FUTURES_MANUAL_STOP');}
   const status=()=>({version:FUTURES_VERSION,environment:'BINANCE_FUTURES_MAINNET',tradingAuthorized:tradingAllowed()===true,edition:'personal',running:engine?.running??false,autoMarginArmed:engine?.autoMarginArmed??false,unlocked:!!engine,vaultExists,settings,preferences:prefs,
     connected:!!engine?.last?.accountChecked&&!engine.error&&now()>=engine.last.localCheckedAt&&now()-engine.last.localCheckedAt<30000,snapshot:engine?.last??null,pending:!!engine?.state?.pending,error:engine?.error??null,reconnecting:!!engine&&prefs.autoConnect&&failures>0,
     walletRead:engine?.walletRead??null,accountModes:engine?.accountModes??null,marginCapacity:engine?.marginCapacity??null,externalExposure:engine?.externalExposure??null,readFailure:engine?.readFailure??null,checking:!!monitorRead,logs:logs.slice(-100)});
-  async function replace(data){
+  async function replace(data,persistBeforeActivation){
     if(engine?.running||engine?.autoMarginArmed||engine?.busy||engine?.state?.pending||ownedPositions(engine?.state).length)throw new Error('FLAT_STOPPED_RECONCILED_FUTURES_PROFILE_REQUIRED');
     const config=validateSettings(data.settings),savedPrefs=preferences(data.preferences),savedCredentials=credentials(data.credentials),clients=clientFactory(savedCredentials);
     await engine?.close();engine=null;secret=null;settings=null;nextCheck=Infinity;
     // An expired subscription blocks risk increases; a manually confirmed close
     // of an existing owned leg remains available.
-    const candidate=new FuturesEngine({profile,clients,settings:config,now,guard:plan=>!closing&&(tradingAllowed()===true||['CLOSE_LONG','CLOSE_SHORT'].includes(plan?.intent))});await candidate.acquire();engine=candidate;secret=savedCredentials;settings=config;prefs=savedPrefs;failures=0;
+    const candidate=new FuturesEngine({profile,clients,settings:config,now,guard:plan=>!closing&&(tradingAllowed()===true||['CLOSE_LONG','CLOSE_SHORT'].includes(plan?.intent))});
+    await candidate.acquire();
+    if(persistBeforeActivation){
+      try{await persistBeforeActivation();}
+      catch(error){
+        prefs={autoConnect:false};
+        await candidate.close();
+        throw new Error('FUTURES_SETTINGS_NOT_SAVED_UNLOCK_PREVIOUS',{cause:error});
+      }
+    }
+    engine=candidate;secret=savedCredentials;settings=config;prefs=savedPrefs;failures=0;
   }
   async function monitor(){
     if(closing||!engine||(!engine.running&&!engine.autoMarginArmed&&!prefs.autoConnect)||actionBusy||engine.busy||now()<nextCheck)return;
@@ -74,12 +85,21 @@ export async function createFuturesServer({profile=defaultProfile(),port=0,now=D
       }
       if(request.method!=='POST'||request.headers.origin!==origin||request.headers['content-type']!=='application/json')return reply(403,{error:'LOCAL_FUTURES_ORIGIN_REQUIRED'});
       const body=await bodyOf(request);
-      if(path==='/api/stop'){engine?.stop();record('FUTURES_MANUAL_STOP');return reply(200,status());}
+      if(path==='/api/stop'){stop();return reply(200,status());}
       if(path==='/api/auto-margin-stop'){engine?.stopAutoMargin();record('JSON_AUTO_MARGIN_STOPPED');return reply(200,status());}
       if(['/api/start','/api/hedge-lock','/api/contract-settings','/api/hedge-mode','/api/add-margin','/api/auto-margin-start'].includes(path)&&tradingAllowed()!==true)return reply(403,{error:'ACTIVE_LIVE_SUBSCRIPTION_REQUIRED'});
       if(path==='/api/check'&&monitorRead&&!actionBusy){await monitorRead;return reply(200,status());}
-      if(actionBusy||engine?.busy)throw new Error('FUTURES_ACTION_IN_PROGRESS');actionBusy=true;
+      const startAfterRead=path==='/api/start'?monitorRead:null;
+      if(actionBusy||(engine?.busy&&!startAfterRead))throw new Error('FUTURES_ACTION_IN_PROGRESS');
+      actionBusy=true;
       try{
+        if(startAfterRead){
+          const atRequest=stopGeneration;
+          record('FUTURES_START_WAITING_FOR_ACCOUNT_CHECK');
+          await startAfterRead;
+          if(closing||response.destroyed||stopGeneration!==atRequest)throw new Error('FUTURES_START_CANCELLED');
+          if(tradingAllowed()!==true)return reply(403,{error:'ACTIVE_LIVE_SUBSCRIPTION_REQUIRED'});
+        }
         if(path==='/api/preflight'){
           if(engine?.running||engine?.autoMarginArmed||engine?.state?.pending||ownedPositions(engine?.state).length)throw new Error('FLAT_STOPPED_RECONCILED_FUTURES_PROFILE_REQUIRED');
           const creds=body.credentials?credentials(body.credentials):(await loadVault(vaultPath,body.password)).credentials;
@@ -154,7 +174,11 @@ export async function createFuturesServer({profile=defaultProfile(),port=0,now=D
             if(policy&&engine.state)await engine.commit(registerMarginPolicy(engine.state,policy));await saveVault(vaultPath,{credentials:secret,settings:updated,preferences:prefs},body.password);engine.settings=settings=updated;record(policy?'JSON_AUTO_MARGIN_POLICY_IMPORTED':'JSON_AUTO_MARGIN_POLICY_REMOVED');
           }
           else if(path==='/api/settings'){
-            const saved=await loadVault(vaultPath,body.password),data={credentials:saved.credentials,settings:validateSettings(body.settings),preferences:preferences(body.preferences)};await replace(data);try{await saveVault(vaultPath,data,body.password);}catch(e){prefs.autoConnect=false;throw e;}nextCheck=prefs.autoConnect?now():Infinity;record('FUTURES_LOCAL_SETTINGS_UPDATED');
+            const saved=await loadVault(vaultPath,body.password);
+            const data={credentials:saved.credentials,settings:validateSettings(body.settings),preferences:preferences(body.preferences)};
+            await replace(data,()=>saveVault(vaultPath,data,body.password));
+            nextCheck=prefs.autoConnect?now():Infinity;
+            record('FUTURES_LOCAL_SETTINGS_UPDATED');
           }else if(path==='/api/strategy'){
             if(engine.running||engine.autoMarginArmed||engine.state?.pending||ownedPositions(engine.state).length)throw new Error('FLAT_STOPPED_RECONCILED_FUTURES_PROFILE_REQUIRED');
             const external=body.text?parseFuturesStrategy(body.text):null,updated=validateSettings({...settings,externalStrategy:external});await loadVault(vaultPath,body.password);await saveVault(vaultPath,{credentials:secret,settings:updated,preferences:prefs},body.password);engine.settings=settings=updated;record(external?'FUTURES_EXTERNAL_STRATEGY_IMPORTED':'FUTURES_BUILT_IN_STRATEGY_RESTORED');
@@ -167,5 +191,5 @@ export async function createFuturesServer({profile=defaultProfile(),port=0,now=D
   server.requestTimeout=20000;server.headersTimeout=10000;server.maxHeadersCount=40;
   await new Promise((ok,bad)=>{server.once('error',bad);server.listen(port,'127.0.0.1',ok);});origin='http://127.0.0.1:'+server.address().port;
   const timer=setInterval(()=>monitor().catch(()=>{}),pollMs);timer.unref();
-  return {server,url:origin+'/#'+token,status,monitor,stop(){engine?.stop();record('FUTURES_MANUAL_STOP');},async close(){closing=true;clearInterval(timer);engine?.stop();await new Promise(ok=>server.close(ok));while(actionBusy||engine?.busy)await new Promise(ok=>setTimeout(ok,50));await engine?.close();}};
+  return {server,url:origin+'/#'+token,status,monitor,stop,async close(){closing=true;clearInterval(timer);engine?.stop();await new Promise(ok=>server.close(ok));while(actionBusy||engine?.busy)await new Promise(ok=>setTimeout(ok,50));await engine?.close();}};
 }
