@@ -36,13 +36,19 @@ export function totalEquityUsdt(wallets,prices){
 
 // The user selected INITIAL MARGIN as a share of total USDT equity. Leverage
 // scales notional; it never silently changes that selected margin budget.
-export function openingQuantity({market,totalEquity,marginPercent,collateralUsdt,availableCollateral,leverage,price,contractSize='1',stepSize,minimumQuantity,maximumQuantity,minimumNotional='0',feeRate='0'}){
+export function openingQuantity({market,totalEquity,marginPercent,collateralUsdt,availableCollateral,leverage,price,contractSize='1',stepSize,minimumQuantity,maximumQuantity,minimumNotional='0',feeRate='0',capToAvailable=false}){
   family(market);
   if(!Number.isSafeInteger(leverage)||leverage<1||leverage>1000||typeof marginPercent!=='number'||!Number.isFinite(marginPercent)||marginPercent<0.01||marginPercent>100)throw new Error('EXPLICIT_MARGIN_PERCENT_AND_LEVERAGE_REQUIRED');
   const equity=units(totalEquity),fx=units(collateralUsdt),p=units(price),size=units(contractSize),step=units(stepSize);
   if(!equity||!fx||!p||!size||!step)throw new Error('POSITIVE_SIZING_INPUTS_REQUIRED');
   const targetUsdt=multiply(equity,units(String(marginPercent)))/100n;
-  const margin=divide(targetUsdt,fx),collateralNotional=margin*BigInt(leverage);
+  let margin=divide(targetUsdt,fx);
+  if(capToAvailable){
+    const available=units(availableCollateral);
+    const feeAdjusted=divide(available,SCALE+2n*BigInt(leverage)*units(feeRate));
+    if(feeAdjusted<margin)margin=feeAdjusted;
+  }
+  const collateralNotional=margin*BigInt(leverage);
   const raw=market==='USD_M'?divide(collateralNotional,p):multiply(collateralNotional,p)*SCALE/size;
   const quantity=floorStep(raw,step),notional=units(positionNotional({market,quantity:decimal(quantity),price,contractSize}));
   if(quantity<units(minimumQuantity)||quantity>units(maximumQuantity)||notional<units(minimumNotional)||quantity===0n)throw new Error('MARGIN_BUDGET_BELOW_CONTRACT_MINIMUM_OR_FILTER');

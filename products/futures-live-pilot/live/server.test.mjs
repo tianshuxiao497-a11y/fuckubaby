@@ -7,7 +7,7 @@ import {createFuturesServer} from './server.mjs';
 import {loadVault} from '../../spot-live-pilot/live/vault.mjs';
 import {request} from 'node:http';
 const password='fabricated-password-12345',settings={market:'USD_M',symbol:'BTCUSDT',marginMode:'ISOLATED',leverage:5,marginPercent:1,directionMode:'both',dailyLossPercent:20,externalStrategy:null};
-async function fixture(t){const profile=await mkdtemp(join(tmpdir(),'asbf-server-')),calls=[];const app=await createFuturesServer({profile,pollMs:100000,clientFactory:()=>Object.fromEntries(['USD_M','COIN_M'].map(market=>[market,{disarm(){},request(name){calls.push({market,name});if(name==='catalog')return {symbols:[]};throw new Error('NO_EXCHANGE_ACCESS_IN_SERVER_TEST');}}]))});
+async function fixture(t,makeClients){const profile=await mkdtemp(join(tmpdir(),'asbf-server-')),calls=[];const app=await createFuturesServer({profile,pollMs:100000,clientFactory:makeClients??(()=>Object.fromEntries(['USD_M','COIN_M'].map(market=>[market,{disarm(){},request(name){calls.push({market,name});if(name==='catalog')return {symbols:[]};throw new Error('NO_EXCHANGE_ACCESS_IN_SERVER_TEST');}}])))});
   t.after(async()=>{await app.close();await rm(profile,{recursive:true,force:true});});const url=new URL(app.url),headers={'x-asbf-session':url.hash.slice(1),Origin:url.origin,'Content-Type':'application/json'};
   return {app,profile,calls,url,async get(path,override={}){return fetch(url.origin+path,{headers:{...headers,...override}});},async post(name,body={},override={}){const response=await fetch(url.origin+'/api/'+name,{method:'POST',headers:{...headers,...override},body:JSON.stringify(body)});return {status:response.status,value:await response.json()};}};
 }
@@ -46,6 +46,24 @@ test('invalid external strategy and wrong password preserve saved settings; loca
 });
 test('read-only connection failure stops strategy and preserves encrypted configuration for retry',async t=>{
   const f=await fixture(t);await f.post('save',{credentials:{apiKey:'fake',apiSecret:'fake-secret'},password,passwordRepeat:password,settings,preferences:{autoConnect:true}});await f.app.monitor();assert.equal(f.app.status().running,false);assert.equal(f.app.status().reconnecting,true);assert.equal((await loadVault(join(f.profile,'futures-vault.json'),password)).credentials.apiKey,'fake');
+});
+test('the workspace gets the signed five-USDT balance even if the other wallet cannot be checked',async t=>{
+  const readFailure={market:'COIN_M',operation:'time',httpStatus:403,binanceCode:null};
+  const f=await fixture(t,()=>({
+    USD_M:{disarm(){},async syncTime(){},async request(name){
+      assert.equal(name,'balances');
+      return [{asset:'USDT',balance:'5',accountAlias:'private-account-label'}];
+    }},
+    COIN_M:{disarm(){},async syncTime(){throw Object.assign(new Error('FUTURES_SERVICE_REFUSED_OR_RATE_LIMITED'),{readFailure});}}
+  }));
+  await f.post('save',{credentials:{apiKey:'fake',apiSecret:'fake-secret'},password,passwordRepeat:password,settings});
+  assert.equal((await f.post('check')).status,400);
+  const state=await (await f.get('/api/status')).json();
+  assert.deepEqual(state.walletRead.amounts,[{asset:'USDT',balance:'5'}]);
+  assert.deepEqual(state.readFailure,readFailure);
+  assert.equal(JSON.stringify(state).includes('private-account-label'),false);
+  assert.equal(state.connected,false);
+  assert.equal(state.running,false);
 });
 test('external margin import requires the vault password and never arms itself or grants exchange writes',async t=>{
   const f=await fixture(t),text=await readFile(new URL('./example-auto-margin.json',import.meta.url),'utf8');

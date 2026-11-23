@@ -1,10 +1,10 @@
-# Adaptive Trading Bot Live · Customer subscription edition 0.3.1
+# Adaptive Trading Bot Live · Customer subscription edition 0.3.2
 
 A local real-money workspace for Binance Spot and USD-M/COIN-M perpetual futures. Account checks are read-only. Trading needs your explicit manual confirmation. There are no promised returns or guaranteed loss limits.
 
 ## Installation and Whop license
 
-Extract the full ZIP. Windows x64: run the included EXE installer. Ubuntu/Debian x64: install the DEB using the package manager; `sudo apt install ./AdaptiveTradingBot-Live-Customer-0.3.1-linux-amd64.deb` resolves dependencies. On the matching Apple Silicon or Intel Mac, move Adaptive Trading Bot Live Customer.app to Applications.
+Extract the full ZIP. Windows x64: run the included EXE installer. Ubuntu/Debian x64: install the DEB using the package manager; `sudo apt install ./AdaptiveTradingBot-Live-Customer-0.3.2-linux-amd64.deb` resolves dependencies. On the matching Apple Silicon or Intel Mac, move Adaptive Trading Bot Live Customer.app to Applications.
 
 This edition has its own application and data profiles. It does not adopt the old personal or Testnet installation or positions. Do not run multiple bots against the same account concurrently.
 
@@ -27,7 +27,7 @@ Save and perform a read-only check before personally typing `START REAL SPOT TRA
 
 ## Futures setup and position mode
 
-In Futures → Connection & risk, use your own mainnet Futures API Key with either HMAC Secret or matching RSA PEM. The Spot Ed25519 PEM is not a Futures RSA PEM. Both Futures wallets must be readable, USD-M Single-Asset mode is required, and Portfolio Margin is unsupported. Withdrawal permission is not needed.
+In Futures → Connection & risk, use your own mainnet Futures API Key with either HMAC Secret or matching RSA PEM. The Spot Ed25519 PEM is not a Futures RSA PEM. Both Futures wallets must be readable. In Connection & risk, select the USD-M asset mode shown by Binance, save and run the read-only check. Single-Asset works for USDT-funded USDT contracts. To share eligible collateral across assets, select Multi-Assets and Cross. Binance determines collateral eligibility and valuation. The available margin shown in USDT equivalent already accounts for positions and open orders. Order sizing also considers the configured percentage, fees and minimum order size. The selector saves a local preference. Change the account-wide asset mode in Binance USD-M Futures settings if needed. Portfolio Margin is unsupported. Withdrawal permission is not needed.
 
 Select USD-M USDT/USDC linear perpetuals or COIN-M inverse perpetuals, read current exchange settings, choose margin/leverage/allocation and save the local configuration. To change the selected contract's cross/isolated mode or leverage, first stop, be flat and reconcile orders. Save the selection, type `APPLY FUTURES SETTINGS`, then click apply. Typing alone does not submit anything.
 

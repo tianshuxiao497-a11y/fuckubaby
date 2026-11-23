@@ -42,6 +42,8 @@ function routes(market){
     ['addMargin',['POST',prefix+'/v1/positionMargin',['symbol','positionSide','amount','type'],true]],
     ['marginHistory',['GET',prefix+'/v1/positionMargin/history',['symbol','type','startTime','endTime','limit'],true]],
     ...(market==='USD_M'?[
+      ['accountConfig',['GET','/fapi/v1/accountConfig',[],true]],
+      ['marginIndex',['GET','/fapi/v1/assetIndex',['symbol'],false]],
       ['multiAssets',['GET','/fapi/v1/multiAssetsMargin',[],true]],
       ['symbolConfig',['GET','/fapi/v1/symbolConfig',['symbol'],true]],
     ]:[]),
@@ -74,10 +76,21 @@ export class FuturesClient{
   disarmMargin(){this.#margin=false;}
   async syncTime(){const before=this.#now(),result=await this.request('time'),after=this.#now();if(!Number.isSafeInteger(result.serverTime)||result.serverTime<=0||after<before||after-before>5000)throw new Error('UNRELIABLE_FUTURES_CLOCK');this.#offset=result.serverTime-after-250;this.#syncedAt=after;return result.serverTime;}
   async request(name,parameters={}){
+    try{return await this.#send(name,parameters);}
+    catch(error){
+      if(this.#routes.get(name)?.[0]==='GET'){
+        error.readFailure={market:this.market,operation:name,httpStatus:error.httpStatus??null,binanceCode:error.binanceCode??null};
+      }
+      throw error;
+    }
+  }
+  async #send(name,parameters){
     const route=this.#routes.get(name);if(!route||!parameters||typeof parameters!=='object'||Array.isArray(parameters)||Object.keys(parameters).some(k=>!route[2].includes(k)))throw new Error('FUTURES_ROUTE_OR_PARAMETER_REFUSED');
-    if(this.#blocked)throw new Error('FUTURES_SERVICE_BLOCKED');
+    if(this.#blocked)throw Object.assign(new Error('FUTURES_SERVICE_BLOCKED'),{httpStatus:this.#blocked});
     const [method,path,,signed,publicOrigin]=route;
-    if(parameters.symbol!==undefined){if(publicOrigin){if(!/^[A-Z0-9]{2,24}USDT$/.test(parameters.symbol))throw new Error('INVALID_COLLATERAL_PRICE_SYMBOL');}else contractSymbol(parameters.symbol);}
+    if(name==='marginIndex'){
+      if(!['USDTUSD','USDCUSD'].includes(parameters.symbol))throw new Error('INVALID_STABLECOIN_INDEX');
+    }else if(parameters.symbol!==undefined){if(publicOrigin){if(!/^[A-Z0-9]{2,24}USDT$/.test(parameters.symbol))throw new Error('INVALID_COLLATERAL_PRICE_SYMBOL');}else contractSymbol(parameters.symbol);}
     if(['book','mark','fees','brackets','newOrder','newProtection','setMargin','setLeverage','order','trades','addMargin','marginHistory'].includes(name)&&!parameters.symbol)throw new Error('EXPLICIT_CONTRACT_REQUIRED');
     if(name.endsWith('Candles')||name==='candles'){
       if(parameters.interval!=='1m'||!Number.isSafeInteger(parameters.limit)||parameters.limit<1||parameters.limit>120)throw new Error('BOUNDED_MINUTE_CANDLES_REQUIRED');
@@ -124,8 +137,8 @@ export class FuturesClient{
     const url=new URL(path,publicOrigin??this.origin),options={method,headers,redirect:'error',signal:AbortSignal.timeout(12000)};
     if(method==='POST'){headers['Content-Type']='application/x-www-form-urlencoded';options.body=query.toString();}else url.search=query.toString();
     let response;try{response=await this.#fetch(url,options);}catch{throw new Error(method==='GET'?'FUTURES_CONNECTION_FAILED':'FUTURES_RESULT_UNKNOWN_RECONCILE');}
-    if([403,418,429,451].includes(response.status)){this.#blocked=true;this.disarm();await response.body?.cancel();throw new Error('FUTURES_SERVICE_REFUSED_OR_RATE_LIMITED');}
-    let result;try{result=await boundedJson(response);}catch{throw new Error(method==='GET'?'INVALID_FUTURES_RESPONSE':'FUTURES_RESULT_UNKNOWN_RECONCILE');}
+    if([403,418,429,451].includes(response.status)){this.#blocked=response.status;this.disarm();await response.body?.cancel();throw Object.assign(new Error('FUTURES_SERVICE_REFUSED_OR_RATE_LIMITED'),{httpStatus:response.status});}
+    let result;try{result=await boundedJson(response);}catch{throw Object.assign(new Error(method==='GET'?'INVALID_FUTURES_RESPONSE':'FUTURES_RESULT_UNKNOWN_RECONCILE'),{httpStatus:response.status});}
     if(!response.ok||(typeof result?.code==='number'&&result.code<0)){
       const error=new Error(method==='GET'?'FUTURES_QUERY_REJECTED':'FUTURES_MUTATION_REJECTED_OR_UNKNOWN');error.binanceCode=Number.isSafeInteger(result?.code)?result.code:null;error.httpStatus=response.status;
       error.definitiveRejection=method==='POST'&&response.status===400&&([-1013,-1021,-2019,-2021,-2022].includes(error.binanceCode)||(error.binanceCode<=-1100&&error.binanceCode>=-1136));throw error;

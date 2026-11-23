@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {FuturesEngine} from './engine.mjs';
+import {FuturesEngine,validateSettings} from './engine.mjs';
 import {FUTURES_CONFIRMATION,SETTINGS_CONFIRMATION} from './client.mjs';
 import {units,signedUnits,decimal,multiply,pnl} from './math.mjs';
 const initialTime=Date.UTC(2026,10,17,13);
-async function fixture(t,{market='USD_M',direction='LONG',hedge=false,timeout=false,reject=false,unmanaged=false,algoUnsupported=false}={}){
+async function fixture(t,{market='USD_M',direction='LONG',hedge=false,timeout=false,reject=false,unmanaged=false,algoUnsupported=false,usdBalance='1000'}={}){
   const profile=await mkdtemp(join(tmpdir(),'asbf-engine-'));let clock=initialTime,forceClose=false,sequence=100,protection=null,collateralPrice='10000';
-  const cash={USD_M:{USDT:market==='USD_M'?'1000':'0'},COIN_M:{BTC:market==='COIN_M'?'0.1':'0'}};
+  const cash={USD_M:{USDT:market==='USD_M'?usdBalance:'0'},COIN_M:{BTC:market==='COIN_M'?'0.1':'0'}};
   const orders=new Map(),fills=new Map(),positions={USD_M:null,COIN_M:null},income={USD_M:[],COIN_M:[]},calls=[];
   const config={USD_M:{leverage:10,marginMode:'ISOLATED'},COIN_M:{leverage:10,marginMode:'ISOLATED'}};
   if(unmanaged)positions.USD_M={symbol:'BTCUSDT',direction:'LONG',quantity:'1',entryPrice:'10000',positionSide:hedge?'LONG':'BOTH'};
@@ -24,7 +24,7 @@ async function fixture(t,{market='USD_M',direction='LONG',hedge=false,timeout=fa
       if(name==='account')return {canTrade:true,assets:Object.entries(cash[kind]).map(([asset,walletBalance])=>({asset,walletBalance,unrealizedProfit:positions[kind]?pnl({market:kind,side:positions[kind].direction,quantity:positions[kind].quantity,entryPrice:positions[kind].entryPrice,exitPrice:'10000',contractSize:kind==='USD_M'?'1':'100'}):'0'}))};
       if(name==='balances')return Object.entries(cash[kind]).map(([asset,balance])=>({asset,balance,availableBalance:balance,accountAlias:kind+'-same-owner'}));
       if(name==='positions')return positionRows(kind);
-      if(name==='positionMode')return {dualSidePosition:hedge};if(name==='multiAssets')return {multiAssetsMargin:false};
+      if(name==='accountConfig')return {dualSidePosition:hedge,multiAssetsMargin:false,canTrade:true};
       if(name==='openOrders')return [];
       if(name==='openAlgos')return protection?.market===kind&&protection.algoStatus==='NEW'?[structuredClone(protection)]:[];
       if(name==='catalog')return catalog(kind);
@@ -81,6 +81,127 @@ for(const market of ['USD_M','COIN_M'])for(const direction of ['LONG','SHORT'])t
   await f.engine.start(FUTURES_CONFIRMATION);await f.engine.check({execute:true});
   assert.equal(f.engine.state.position.direction,direction);assert.ok(f.engine.state.protection);assert.equal(f.engine.state.orders.length,1);
   f.forceClose();await f.engine.check({execute:true});assert.equal(f.engine.state.position,null);assert.equal(f.engine.state.protection,null);assert.equal(f.engine.state.orders.length,2);
+});
+test('five USDT and the USD-M V3 account response pass read-only checks; missing trading permission still blocks readiness',async t=>{
+  const {engine,clients,calls}=await fixture(t,{usdBalance:'5'});
+  const client=clients.USD_M,request=client.request.bind(client);
+  let permitted=true;
+  client.request=async(name,args)=>{
+    const value=await request(name,args);
+    if(name==='account')delete value.canTrade;
+    if(name==='accountConfig')value.canTrade=permitted;
+    return value;
+  };
+  const snapshot=await engine.check();
+  assert.equal(snapshot.accountChecked,true);
+  assert.equal(snapshot.equityUsdt,'5');
+  assert.deepEqual(engine.walletRead.amounts,[{asset:'USDT',balance:'5'}]);
+  permitted=false;
+  await assert.rejects(engine.check(),/TRADABLE_FUTURES_ACCOUNTS_REQUIRED/);
+  assert.deepEqual(engine.walletRead.amounts,[{asset:'USDT',balance:'5'}]);
+  assert.equal(calls.some(call=>call.name==='newOrder'),false);
+  assert.equal(engine.running,false);
+});
+test('USD-M asset and position modes are verified independently without changing the exchange',async t=>{
+  const {engine,clients}=await fixture(t,{usdBalance:'5.11000047'});
+  const request=clients.USD_M.request.bind(clients.USD_M),queries=[];
+  let config={},assetReply={},positionReply={};
+  clients.USD_M.request=async(name,args)=>{
+    queries.push(name);
+    if(name==='accountConfig')return {canTrade:true,...config};
+    if(name==='multiAssets')return assetReply;
+    if(name==='positionMode')return positionReply;
+    if(name==='account')return {...await request(name,args),totalMarginBalance:'5.11000047',availableBalance:'5.11000047'};
+    if(name==='marginIndex')return {symbol:args.symbol,index:'1',time:clients.USD_M.serverNow()};
+    return request(name,args);
+  };
+  config={multiAssetsMargin:'false',dualSidePosition:'false'};
+  assert.equal((await engine.check()).accountChecked,true);
+  assert.deepEqual(engine.accountModes,{multiAssets:false,hedge:false});
+  assert.ok(!queries.includes('multiAssets')&&!queries.includes('positionMode'));
+
+  config={};assetReply={multiAssetsMargin:false};positionReply={dualSidePosition:true};
+  assert.equal((await engine.check()).hedge,true);
+  assert.ok(queries.includes('multiAssets')&&queries.includes('positionMode'));
+
+  config={multiAssetsMargin:'true',dualSidePosition:false};
+  assert.equal((await engine.check()).blocker,'ASSET_MODE_PREFERENCE_MISMATCH');
+  assert.deepEqual(engine.walletRead.amounts,[{asset:'USDT',balance:'5.11000047'}]);
+  assert.deepEqual(engine.accountModes,{multiAssets:true,hedge:false});
+
+  config={};assetReply={multiAssetsMargin:'unexpected'};
+  await assert.rejects(engine.check(),/USD_M_ASSET_MODE_UNVERIFIED/);
+  assetReply={multiAssetsMargin:false};positionReply={};
+  await assert.rejects(engine.check(),/USD_M_POSITION_MODE_UNVERIFIED/);
+  assert.equal(engine.running,false);
+  assert.ok(!queries.some(name=>name.startsWith('set')||name.startsWith('new')));
+});
+test('multi-assets caps BTCUSDT orders by the net USD pool even with no USDT cash; mode changes stop new orders',async t=>{
+  const {engine,clients,settings,calls}=await fixture(t,{usdBalance:'0'});
+  assert.equal(validateSettings(settings).assetMode,'single');
+  assert.throws(()=>validateSettings({...settings,assetMode:'multi'}),/REQUIRES_CROSS/);
+  engine.settings=validateSettings({...settings,assetMode:'multi',marginMode:'CROSSED'});
+  const usd=clients.USD_M,request=usd.request.bind(usd);
+  let availableUsd='6',indexTime=usd.serverNow(),multi=true,foreignOrder=false;
+  usd.request=async(name,args)=>{
+    if(name==='accountConfig')return {canTrade:true,dualSidePosition:false,multiAssetsMargin:multi};
+    if(name==='marginIndex')return {symbol:args.symbol,index:args.symbol==='USDCUSD'?'1':'1.2',time:indexTime};
+    if(name==='account')return {canTrade:true,totalMarginBalance:'1200',availableBalance:availableUsd,assets:[
+      {asset:'USDT',walletBalance:'0',unrealizedProfit:'0'},
+      {asset:'BTC',walletBalance:'0.1',unrealizedProfit:'0'}]};
+    if(name==='balances')return [{asset:'USDT',balance:'0',availableBalance:'0',accountAlias:'USD_M-same-owner'},{asset:'BTC',balance:'0.1',availableBalance:'0',marginAvailable:true,accountAlias:'USD_M-same-owner'}];
+    if(name==='symbolConfig')return [{symbol:args.symbol,marginType:'CROSSED',leverage:10}];
+    if(name==='openOrders'&&foreignOrder)return [{symbol:'ETHUSDT'}];
+    return request(name,args);
+  };
+  foreignOrder=true;
+  await assert.rejects(engine.check(),/UNRESOLVED_OR_UNMANAGED_FUTURES_ORDERS/);
+  assert.equal(engine.marginCapacity.availableUsdt,'5');
+  foreignOrder=false;
+  const snapshot=await engine.check();
+  assert.deepEqual(engine.marginCapacity.eligible,['BTC']);
+  assert.equal(engine.marginCapacity.poolEquityUsdt,'1000');
+  assert.ok(snapshot.plan&&Number(snapshot.plan.allocation.initialMargin)+Number(snapshot.plan.allocation.reservedRoundTripFees)<=5);
+  assert.equal(calls.filter(c=>c.name==='newOrder').length,0);
+  await engine.start(FUTURES_CONFIRMATION);
+  multi=false;
+  await engine.check({execute:true});
+  assert.equal(engine.running,false);
+  assert.equal(calls.filter(c=>c.name==='newOrder').length,0);
+  multi=true;availableUsd='-1';
+  assert.equal((await engine.check()).plan,null);
+  assert.equal(engine.marginCapacity.availableUsdt,'0');
+  availableUsd=undefined;
+  await assert.rejects(engine.check(),/MARGIN_CAPACITY_UNVERIFIED/);
+  availableUsd='6';indexTime-=120000;
+  await assert.rejects(engine.check(),/MARGIN_CONVERSION_INDEX_UNVERIFIED/);
+});
+test('multi-assets simulated fill and owned reduce-only close remain available during a conversion feed outage',async t=>{
+  const {engine,settings,clients,calls}=await fixture(t);
+  engine.settings=validateSettings({...settings,assetMode:'multi',marginMode:'CROSSED'});
+  const usd=clients.USD_M,request=usd.request.bind(usd);
+  let online=true;
+  usd.request=async(name,args)=>{
+    if(name==='accountConfig')return {canTrade:true,multiAssetsMargin:true,dualSidePosition:false};
+    if(name==='marginIndex'){
+      if(!online)throw new Error('MARGIN_CONVERSION_INDEX_UNVERIFIED');
+      return {symbol:args.symbol,index:'1',time:usd.serverNow()};
+    }
+    const reply=await request(name,args);
+    if(name==='account')return {...reply,availableBalance:'600',totalMarginBalance:'1000'};
+    if(name==='symbolConfig')return reply.map(row=>({...row,marginType:'CROSSED'}));
+    return reply;
+  };
+  await engine.start(FUTURES_CONFIRMATION);
+  await engine.check({execute:true});
+  assert.ok(engine.state.position&&engine.state.protection);
+  online=false;
+  await assert.rejects(engine.check(),/MARGIN_CONVERSION_INDEX_UNVERIFIED/);
+  await engine.closeOwnedPosition(FUTURES_CONFIRMATION);
+  assert.equal(engine.state.position,null);
+  const orders=calls.filter(c=>c.name==='newOrder');
+  assert.equal(orders.length,2);
+  assert.equal(orders[1].args.reduceOnly,'true');
 });
 test('hedge mode uses the selected position side and never sends forbidden reduceOnly',async t=>{
   const f=await fixture(t,{direction:'SHORT',hedge:true});await f.engine.start(FUTURES_CONFIRMATION);await f.engine.check({execute:true});

@@ -10,6 +10,15 @@ function fixture({market='USD_M',rsa=false,reply}={}){
   return {client,calls,pair};
 }
 const order={symbol:'BTCUSDT',side:'BUY',positionSide:'BOTH',type:'LIMIT',timeInForce:'IOC',quantity:'0.01',price:'100000',newClientOrderId:id,newOrderRespType:'ACK'};
+test('account read reports only the query name, market and numeric exchange errors',async()=>{
+  const f=fixture({reply:url=>url.pathname.endsWith('/time')?undefined:Response.json({code:-2015,msg:'sensitive upstream text'},{status:401})});
+  await f.client.syncTime();
+  await assert.rejects(f.client.request('balances'),err=>{
+    assert.deepEqual(err.readFailure,{market:'USD_M',operation:'balances',httpStatus:401,binanceCode:-2015});
+    assert.doesNotMatch(JSON.stringify(err.readFailure),/sensitive|signature|APIKEY/);
+    return true;
+  });
+});
 test('U and coin requests use different fixed origins, paths and HMAC-signed query bodies',async()=>{
   for(const market of ['USD_M','COIN_M']){
     const f=fixture({market});await f.client.syncTime();f.client.arm(FUTURES_CONFIRMATION);

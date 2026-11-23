@@ -1,10 +1,10 @@
-# Adaptive Trading Bot Live · 客户订阅版 0.3.1
+# Adaptive Trading Bot Live · 客户订阅版 0.3.2
 
 这是本机运行的真实资金软件，包含现货和 U 本位／币本位永续合约。请先完成只读检查，交易必须由你手动确认。没有收益保证，风险规则也不能保证最大亏损。
 
 ## 安装和软件许可证
 
-1. 完整解压与你的系统对应的 ZIP。Windows x64 运行 EXE 安装器；Ubuntu／Debian x64 使用系统包安装器安装 DEB（推荐终端 `sudo apt install ./AdaptiveTradingBot-Live-Customer-0.3.1-linux-amd64.deb`）；Mac 按 Apple 芯片 arm64 或 Intel x64 选择，把 Adaptive Trading Bot Live Customer.app 移入 Applications。
+1. 完整解压与你的系统对应的 ZIP。Windows x64 运行 EXE 安装器；Ubuntu／Debian x64 使用系统包安装器安装 DEB（推荐终端 `sudo apt install ./AdaptiveTradingBot-Live-Customer-0.3.2-linux-amd64.deb`）；Mac 按 Apple 芯片 arm64 或 Intel x64 选择，把 Adaptive Trading Bot Live Customer.app 移入 Applications。
 2. 本版与旧自用版、Testnet 使用不同的应用及配置目录，不会自动迁移或接管旧仓位。不要让两个机器人同时操作同一个交易账户。
 3. 使用购买这个实盘商品的 Whop 账号，打开订单和 Software，复制软件许可证：
    https://whop.com/adaptive-trading-bot-live/exp_1vOy7FcD1W5Xml/app/
@@ -33,7 +33,7 @@ Windows 与 Mac 版本未签名，Mac 未经 Apple 公证。请核对来源和�
 4. 若需要改变币安所选合约的全仓／逐仓或杠杆，先停止、空仓并核清委托。保存选择后输入 `APPLY FUTURES SETTINGS`，再点应用按钮。输入文字本身不触发操作。
 5. 单仓管理同时只保留一边；双向管理允许该合约一多一空，策略分别判断开仓、退出和保护。切换交易对／合约类型／交易策略需停止、空仓且无待核对委托。
 
-本版管理一个选定永续合约，不管理季度交割、组合保证金或其他机器人／手动合约仓位。U 本位需单资产保证金模式。全仓可以涉及同类担保资产的其他可用保证金；所选初始保证金不是全仓最大损失上限。
+本版管理一个选定永续合约，不管理季度交割、组合保证金或其他机器人／手动合约仓位。在「连接与风控」选择与币安账户一致的 U 本位资产模式，保存后点「只读核对」。只用 USDT 交易 USDT 合约时，单资产即可。希望共用多种合格抵押资产时可选多资产和全仓。币安决定哪些资产合格及其折算比例。软件显示交易所扣除持仓和挂单占用后的可用保证金，按 USDT 折算。实际委托还受每笔比例、手续费和最小订单限制。此处选择保存在本机；如需切换账户模式，请到币安 U 本位合约的资产模式设置。全仓可以涉及同类担保资产的其他可用保证金；所选初始保证金不是全仓最大损失上限。
 
 ## 启用币安双向持仓
 

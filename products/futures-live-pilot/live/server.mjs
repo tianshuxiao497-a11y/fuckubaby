@@ -17,6 +17,14 @@ const here=fileURLToPath(new URL('.',import.meta.url));
 export function defaultProfile(){return process.platform==='win32'?join(process.env.LOCALAPPDATA??homedir(),'AdaptiveSpotBot','FuturesPersonal'):process.platform==='darwin'?join(homedir(),'Library','Application Support','AdaptiveSpotBot','FuturesPersonal'):join(process.env.XDG_DATA_HOME??join(homedir(),'.local','share'),'AdaptiveSpotBot','FuturesPersonal');}
 const safeError=error=>/^[A-Z0-9_]+$/.test(error?.message??'')?error.message:'FUTURES_ACTION_FAILED';
 function credentials(value){if(!value||Object.keys(value).some(k=>!['apiKey','apiSecret','privateKeyPem'].includes(k))||typeof value.apiKey!=='string'||!value.apiKey.trim()||(!!value.apiSecret===!!value.privateKeyPem))throw new Error('ONE_FUTURES_SIGNATURE_METHOD_REQUIRED');return value;}
+async function registrationPair(profile,password){
+  let pair;
+  try{pair=await loadVault(resolve(profile,'futures-registration-key.json'),password);}
+  catch(error){if(error.code==='ENOENT')return null;throw error;}
+  const publicKey=createPublicKey(createPrivateKey(pair.privateKeyPem)).export({type:'spki',format:'pem'});
+  if(publicKey!==pair.publicKey)throw new Error('FUTURES_REGISTRATION_KEY_MISMATCH');
+  return pair;
+}
 function preferences(value){if(value===undefined)return {autoConnect:false};if(!value||Object.keys(value).join(',')!=='autoConnect'||typeof value.autoConnect!=='boolean')throw new Error('INVALID_FUTURES_CONNECTION_PREFERENCE');return value;}
 async function bodyOf(request){let size=0;const parts=[];for await(const part of request){size+=part.length;if(size>32768)throw new Error('FUTURES_REQUEST_TOO_LARGE');parts.push(part);}try{return JSON.parse(Buffer.concat(parts).toString('utf8'));}catch{throw new Error('INVALID_FUTURES_REQUEST_JSON');}}
 export async function createFuturesServer({profile=defaultProfile(),port=0,now=Date.now,pollMs=5000,embeddingOrigin=null,tradingAllowed=()=>true,clientFactory=value=>Object.fromEntries(['USD_M','COIN_M'].map(market=>[market,new FuturesClient({market,...value})]))}={}){
@@ -25,9 +33,11 @@ export async function createFuturesServer({profile=defaultProfile(),port=0,now=D
   if(!Number.isSafeInteger(pollMs)||pollMs<20)throw new Error('INVALID_FUTURES_MONITOR_INTERVAL');
   const token=randomBytes(32).toString('hex'),vaultPath=resolve(profile,'futures-vault.json');let origin,engine=null,secret=null,settings=null,prefs={autoConnect:false},closing=false,actionBusy=false,nextCheck=Infinity,failures=0;
   let vaultExists=await lstat(vaultPath).then(()=>true,e=>{if(e.code==='ENOENT')return false;throw e;});
+  let monitorRead=null;
   const logs=[];const record=(event,code=null)=>{logs.push({time:now(),event,code});if(logs.length>200)logs.shift();};
   const status=()=>({version:FUTURES_VERSION,environment:'BINANCE_FUTURES_MAINNET',tradingAuthorized:tradingAllowed()===true,edition:'personal',running:engine?.running??false,autoMarginArmed:engine?.autoMarginArmed??false,unlocked:!!engine,vaultExists,settings,preferences:prefs,
-    connected:!!engine?.last?.accountChecked&&!engine.error&&now()>=engine.last.localCheckedAt&&now()-engine.last.localCheckedAt<30000,snapshot:engine?.last??null,pending:!!engine?.state?.pending,error:engine?.error??null,reconnecting:!!engine&&prefs.autoConnect&&failures>0,logs:logs.slice(-100)});
+    connected:!!engine?.last?.accountChecked&&!engine.error&&now()>=engine.last.localCheckedAt&&now()-engine.last.localCheckedAt<30000,snapshot:engine?.last??null,pending:!!engine?.state?.pending,error:engine?.error??null,reconnecting:!!engine&&prefs.autoConnect&&failures>0,
+    walletRead:engine?.walletRead??null,accountModes:engine?.accountModes??null,marginCapacity:engine?.marginCapacity??null,readFailure:engine?.readFailure??null,checking:!!monitorRead,logs:logs.slice(-100)});
   async function replace(data){
     if(engine?.running||engine?.autoMarginArmed||engine?.busy||engine?.state?.pending||ownedPositions(engine?.state).length)throw new Error('FLAT_STOPPED_RECONCILED_FUTURES_PROFILE_REQUIRED');
     const config=validateSettings(data.settings),savedPrefs=preferences(data.preferences),savedCredentials=credentials(data.credentials),clients=clientFactory(savedCredentials);
@@ -38,8 +48,15 @@ export async function createFuturesServer({profile=defaultProfile(),port=0,now=D
   }
   async function monitor(){
     if(closing||!engine||(!engine.running&&!engine.autoMarginArmed&&!prefs.autoConnect)||actionBusy||engine.busy||now()<nextCheck)return;
-    try{await engine.check({execute:engine.running||engine.autoMarginArmed});if(failures)record('FUTURES_READ_ONLY_CONNECTION_RESTORED');failures=0;nextCheck=now()+((engine.running||engine.autoMarginArmed)?5000:15000);}
+    try{
+      const execute=engine.running||engine.autoMarginArmed;
+      const check=engine.check({execute});
+      if(!execute)monitorRead=check;
+      await check;
+      if(failures)record('FUTURES_READ_ONLY_CONNECTION_RESTORED');failures=0;nextCheck=now()+((engine.running||engine.autoMarginArmed)?5000:15000);
+    }
     catch(error){failures++;nextCheck=now()+Math.min(60000,5000*2**Math.min(failures-1,4));record('FUTURES_READ_ONLY_RECONNECT_WAIT',safeError(error));}
+    finally{monitorRead=null;}
   }
   const server=http.createServer(async(request,response)=>{
     const path=request.url,security={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer',...(embeddingOrigin?{}:{'X-Frame-Options':'DENY'}),'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors "+(embeddingOrigin??"'none'")+"; base-uri 'none'; form-action 'self'"};
@@ -60,6 +77,7 @@ export async function createFuturesServer({profile=defaultProfile(),port=0,now=D
       if(path==='/api/stop'){engine?.stop();record('FUTURES_MANUAL_STOP');return reply(200,status());}
       if(path==='/api/auto-margin-stop'){engine?.stopAutoMargin();record('JSON_AUTO_MARGIN_STOPPED');return reply(200,status());}
       if(['/api/start','/api/hedge-lock','/api/contract-settings','/api/hedge-mode','/api/add-margin','/api/auto-margin-start'].includes(path)&&tradingAllowed()!==true)return reply(403,{error:'ACTIVE_LIVE_SUBSCRIPTION_REQUIRED'});
+      if(path==='/api/check'&&monitorRead&&!actionBusy){await monitorRead;return reply(200,status());}
       if(actionBusy||engine?.busy)throw new Error('FUTURES_ACTION_IN_PROGRESS');actionBusy=true;
       try{
         if(path==='/api/preflight'){
@@ -69,7 +87,7 @@ export async function createFuturesServer({profile=defaultProfile(),port=0,now=D
           const env=await probe.environment(),catalog=await probe.client.request('catalog'),rules=contractRules(catalog,body.market,body.symbol),config=await probe.configuration(env,rules),tiers=leverageTiers(await probe.client.request('brackets',{symbol:body.symbol}),body.market,body.symbol);
           const wallets={...env.wallets};for(const market of ['USD_M','COIN_M'])for(const row of env.accounts[market].assets)wallets[market+'.'+row.asset]=decimal(signedUnits(row.walletBalance)+signedUnits(row.unrealizedProfit));
           const equity=totalEquityUsdt(aggregateAssets(wallets),await probe.prices(wallets));
-          return reply(200,{preflight:true,market:body.market,symbol:body.symbol,configuration:config,hedge:env.hedge,equityUsdt:equity,leverageTiers:tiers,marginAsset:rules.marginAsset,unmanagedPositions:Object.values(env.positions).flat().filter(row=>signedUnits(String(row.positionAmt))!==0n).length});
+          return reply(200,{preflight:true,marginCapacity:env.capacity??null,market:body.market,symbol:body.symbol,configuration:config,hedge:env.hedge,equityUsdt:equity,leverageTiers:tiers,marginAsset:rules.marginAsset,unmanagedPositions:Object.values(env.positions).flat().filter(row=>signedUnits(String(row.positionAmt))!==0n).length});
         }else if(path==='/api/catalog'){
           if(!['USD_M','COIN_M'].includes(body.market))throw new Error('EXPLICIT_FUTURES_MARKET_REQUIRED');
           const client=engine?.clients[body.market]??clientFactory({})[body.market],raw=await client.request('catalog');
@@ -77,17 +95,46 @@ export async function createFuturesServer({profile=defaultProfile(),port=0,now=D
         }else if(path==='/api/save'){
           if(vaultExists)throw new Error('UNLOCK_EXISTING_FUTURES_VAULT_BEFORE_EDITING');
           if(typeof body.password!=='string'||body.password.length<12||body.password!==body.passwordRepeat)throw new Error('MATCHING_FUTURES_VAULT_PASSWORDS_REQUIRED');
-          const data={credentials:credentials(body.credentials),settings:validateSettings(body.settings),preferences:preferences(body.preferences)};await replace(data);
-          try{await saveVault(vaultPath,data,body.password);}catch(e){prefs.autoConnect=false;throw e;}vaultExists=true;nextCheck=prefs.autoConnect?now():Infinity;record('FUTURES_CONFIGURATION_SAVED');
-        }else if(path==='/api/unlock'){await replace(await loadVault(vaultPath,body.password));nextCheck=prefs.autoConnect?now():Infinity;record('FUTURES_VAULT_UNLOCKED');}
+          const supplied=body.credentials;
+          if(typeof supplied?.apiKey!=='string'||!supplied.apiKey.trim())throw new Error('FUTURES_API_KEY_REQUIRED');
+          let signing=supplied;
+          if(!supplied.apiSecret&&!supplied.privateKeyPem){
+            const pair=await registrationPair(profile,body.password);
+            if(!pair)throw new Error('ONE_FUTURES_SIGNATURE_METHOD_REQUIRED');
+            signing={...supplied,privateKeyPem:pair.privateKeyPem};
+          }
+          const data={credentials:credentials(signing),settings:validateSettings(body.settings),preferences:preferences(body.preferences)};
+          try{await replace(data);}catch(error){
+            if(error.code==='EADDRINUSE')throw new Error('FUTURES_PROFILE_IN_USE');
+            if(error.code==='EPERM'||error.code==='EACCES')throw new Error('FUTURES_VAULT_WRITE_DENIED');
+            if(error.code==='ENOSPC')throw new Error('FUTURES_VAULT_DISK_FULL');
+            throw error;
+          }
+          try{
+            // Another instance might have created the vault since this window opened.
+            vaultExists=await lstat(vaultPath).then(()=>true,error=>{if(error.code==='ENOENT')return false;throw error;});
+            if(vaultExists)throw new Error('UNLOCK_EXISTING_FUTURES_VAULT_BEFORE_EDITING');
+            await saveVault(vaultPath,data,body.password);
+          }catch(error){
+            nextCheck=Infinity;prefs.autoConnect=false;
+            try{await engine.close();}finally{engine=null;secret=null;settings=null;}
+            if(error.code==='EPERM'||error.code==='EACCES')throw new Error('FUTURES_VAULT_WRITE_DENIED');
+            if(error.code==='ENOSPC')throw new Error('FUTURES_VAULT_DISK_FULL');
+            throw error;
+          }
+          vaultExists=true;nextCheck=prefs.autoConnect?now():Infinity;record('FUTURES_CONFIGURATION_SAVED');
+        }else if(path==='/api/unlock'){
+          let saved;
+          try{saved=await loadVault(vaultPath,body.password);}catch(error){if(error.code==='ENOENT')throw new Error('FUTURES_FIRST_SAVE_REQUIRED');throw error;}
+          await replace(saved);nextCheck=prefs.autoConnect?now():Infinity;record('FUTURES_VAULT_UNLOCKED');
+        }
         else if(path==='/api/lock'){
           if(engine?.running||engine?.autoMarginArmed||engine?.state?.pending||ownedPositions(engine?.state).length)throw new Error('FLAT_STOPPED_RECONCILED_FUTURES_PROFILE_REQUIRED');await engine?.close();engine=null;secret=null;settings=null;nextCheck=Infinity;record('FUTURES_VAULT_LOCKED');
         }else if(path==='/api/generate-key'){
           if(engine?.running||engine?.state?.pending)throw new Error('STOP_BEFORE_FUTURES_KEY_GENERATION');if(vaultExists&&!engine)throw new Error('UNLOCK_FUTURES_VAULT_FIRST');
           if(secret?.privateKeyPem)return reply(200,{publicKey:createPublicKey(createPrivateKey(secret.privateKeyPem)).export({type:'spki',format:'pem'}),privateKeyPem:secret.privateKeyPem,reused:true});
-          const keyFile=resolve(profile,'futures-registration-key.json');let saved;
-          try{await lstat(keyFile);saved=await loadVault(keyFile,body.password);}catch(error){if(error.code!=='ENOENT')throw error;}
-          if(saved){const actual=createPublicKey(createPrivateKey(saved.privateKeyPem)).export({type:'spki',format:'pem'});if(actual!==saved.publicKey)throw new Error('FUTURES_REGISTRATION_KEY_MISMATCH');return reply(200,{...saved,reused:true});}
+          const keyFile=resolve(profile,'futures-registration-key.json'),saved=await registrationPair(profile,body.password);
+          if(saved)return reply(200,{...saved,reused:true});
           const keys=generateKeyPairSync('rsa',{modulusLength:3072}),value={publicKey:keys.publicKey.export({type:'spki',format:'pem'}),privateKeyPem:keys.privateKey.export({type:'pkcs8',format:'pem'})};await saveVault(keyFile,value,body.password);record('FUTURES_RSA_PUBLIC_KEY_CREATED');return reply(200,{...value,reused:false});
         }else{
           if(!engine)throw new Error('SAVE_OR_UNLOCK_FUTURES_CONFIGURATION');

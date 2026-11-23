@@ -10,5 +10,5 @@ const timeout=setTimeout(()=>child.kill('SIGTERM'),90000);
 const code=await new Promise((done,reject)=>{child.once('error',reject);child.once('close',done);});clearTimeout(timeout);
 if(code!==0){console.error(stderr.slice(-2000));throw new Error('NATIVE_WORKBENCH_SELF_TEST_FAILED_'+code);}
 const result=JSON.parse(await readFile(resolve(destination,'RESULT.json'),'utf8'));
-if(!result.passed||result.version!=='0.3.1-customer'||!result.twoWorkspaces||!result.legs.closeLong||!result.legs.closeShort||!result.margin.manualEnabled||!result.margin.autoDisabled||!result.unconfiguredStartBlocked||!result.unlicensedStartBlocked||!result.customerSubscriptionIntegrated||result.realAccountReads!==0||result.exchangeOrders!==0)throw new Error('NATIVE_WORKBENCH_RESULT_INCOMPLETE');
+if(!result.passed||result.version!=='0.3.2-customer'||!result.assetModes?.multi||!result.assetModes?.single||!result.assetModes?.cross||!result.twoWorkspaces||!result.legs.closeLong||!result.legs.closeShort||!result.margin.manualEnabled||!result.margin.autoDisabled||!result.unconfiguredStartBlocked||!result.unlicensedStartBlocked||!result.customerSubscriptionIntegrated||result.realAccountReads!==0||result.exchangeOrders!==0)throw new Error('NATIVE_WORKBENCH_RESULT_INCOMPLETE');
 console.log(JSON.stringify(result));
