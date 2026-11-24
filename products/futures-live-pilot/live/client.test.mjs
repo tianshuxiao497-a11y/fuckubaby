@@ -86,3 +86,116 @@ test('timeout and rate refusal stop writes without resubmitting an order',async(
   const blocked=fixture({reply:(url)=>String(url).includes('/time')?null:new Response('{}',{status:429})});
   await blocked.client.syncTime();await assert.rejects(blocked.client.request('account'),/REFUSED_OR_RATE/);assert.throws(()=>blocked.client.arm(FUTURES_CONFIRMATION),/BLOCKED/);
 });
+
+function makerFixture({market='USD_M',direction='LONG',hedge=false,status='PARTIALLY_FILLED',override={},failure}={}){
+  const symbol=market==='USD_M'?'BTCUSDT':'BTCUSD_PERP';
+  const side=direction==='LONG'?'BUY':'SELL',positionSide=hedge?direction:'BOTH';
+  const quantity=market==='USD_M'?'0.003':'3',executedQty=market==='USD_M'?'0.001':'1';
+  const args={symbol,side,positionSide,type:'LIMIT',timeInForce:'GTX',quantity,price:'60000',
+    newOrderRespType:'ACK',...(hedge?{}:{reduceOnly:'false'})};
+  const pending={id,kind:'ORDER',direction,intent:'OPEN_'+direction,market,args,exchangeOrderId:123};
+  const observed={orderId:123,clientOrderId:id,symbol,side,positionSide,type:'LIMIT',timeInForce:'GTX',
+    origQty:quantity,executedQty,price:'60000.0000',avgPrice:'60000.00',reduceOnly:false,status,...override};
+  const f=fixture({market,reply:(url,opts)=>{
+    if(failure){const response=failure(url,opts);if(response!==undefined)return response;}
+    if(opts.method==='GET'&&url.pathname.endsWith('/order'))return Response.json(observed);
+  }});
+  const receipt={id,orderId:123,market,symbol,side,positionSide,timeInForce:'GTX',intent:'OPEN_'+direction,
+    quantity:executedQty,status,time};
+  const stop={symbol,side:side==='BUY'?'SELL':'BUY',positionSide,quantity:executedQty,algoType:'CONDITIONAL',
+    type:'STOP_MARKET',workingType:'MARK_PRICE',priceProtect:'FALSE',clientAlgoId:'asbp_'+id.slice(5),
+    triggerPrice:direction==='LONG'?'59900':'60100',...(hedge?{}:{reduceOnly:'true'})};
+  const writeCalls=()=>f.calls.filter(call=>call.options.method!=='GET');
+  return {...f,args,pending,stop,receipt,observed,writeCalls};
+}
+
+test('GTX requires an armed explicit opening order and definitive -5022 applies only to that exact submission',async()=>{
+  for(const direction of ['LONG','SHORT']){
+    const f=makerFixture({hedge:true,direction});
+    await f.client.syncTime();
+    const open={...f.args,newClientOrderId:id};
+    await assert.rejects(f.client.request('newOrder',open),/EXPLICIT_FUTURES_START/);
+    f.client.arm(FUTURES_CONFIRMATION);
+    await f.client.request('newOrder',open);
+    await assert.rejects(f.client.request('newOrder',{...open,side:open.side==='BUY'?'SELL':'BUY'}),/GTX_ONLY_FOR_OPENING/);
+    await assert.rejects(f.client.request('newOrder',{...open,positionSide:'BOTH',reduceOnly:'true'}),/GTX_ONLY_FOR_OPENING/);
+    await assert.rejects(f.client.request('newOrder',{...open,positionSide:'BOTH'}),/GTX_ONLY_FOR_OPENING/);
+    assert.equal(f.writeCalls().length,1);
+  }
+  for(const [tif,http,expected] of [['GTX',400,true],['IOC',400,false],['GTX',503,false]]){
+    const f=makerFixture({failure:(_url,opts)=>opts.method==='POST'?Response.json({code:-5022},{status:http}):undefined});
+    await f.client.syncTime();f.client.arm(FUTURES_CONFIRMATION);
+    await assert.rejects(f.client.request('newOrder',{...f.args,timeInForce:tif,newClientOrderId:id}),
+      error=>error.binanceCode===-5022&&error.definitiveRejection===expected);
+  }
+});
+
+test('disarmed cancellation requires the exact working order returned by this client and cannot be reused or target another contract',async()=>{
+  const f=makerFixture(),g=makerFixture();
+  await f.client.syncTime();await g.client.syncTime();
+  const reference={symbol:f.args.symbol,origClientOrderId:id};
+  const order=await f.client.request('order',reference);
+  await assert.rejects(f.client.request('cancelOrder',reference),/EXPLICIT_FUTURES_START/);
+  await assert.rejects(g.client.requestOwnedMakerCancel(f.pending,order),/VERIFIED_WORKING/);
+  await assert.rejects(f.client.requestOwnedMakerCancel(f.pending,{...order}),/VERIFIED_WORKING/);
+  for(const change of [{market:'COIN_M'},{id:'asbf_'+'c'.repeat(28)},{direction:'SHORT'},{exchangeOrderId:124}]){
+    await assert.rejects(f.client.requestOwnedMakerCancel({...f.pending,...change},order),/VERIFIED_WORKING/);
+  }
+  for(const change of [{symbol:'ETHUSDT'},{price:'60100'},{quantity:'0.004'},{timeInForce:'IOC'},{positionSide:'SHORT'},{side:'SELL'}]){
+    await assert.rejects(f.client.requestOwnedMakerCancel({...f.pending,args:{...f.args,...change}},order),/VERIFIED_WORKING/);
+  }
+  assert.equal(f.writeCalls().length,0);
+  await f.client.requestOwnedMakerCancel(f.pending,order);
+  assert.equal(f.writeCalls().length,1);
+  assert.equal(f.writeCalls()[0].options.method,'DELETE');
+  assert.equal(f.writeCalls()[0].url.searchParams.get('origClientOrderId'),id);
+  await assert.rejects(f.client.requestOwnedMakerCancel(f.pending,order),/VERIFIED_WORKING/);
+  const alreadyFilled=makerFixture({status:'FILLED'});
+  await alreadyFilled.client.syncTime();
+  const terminal=await alreadyFilled.client.request('order',reference);
+  await assert.rejects(alreadyFilled.client.requestOwnedMakerCancel(alreadyFilled.pending,terminal),/VERIFIED_WORKING/);
+  assert.equal(alreadyFilled.writeCalls().length,0);
+});
+
+test('disarmed protection matches the exact terminal maker fill with a fixed closing side, quantity and deterministic algo ID in both markets',async()=>{
+  for(const market of ['USD_M','COIN_M'])for(const direction of ['LONG','SHORT'])for(const hedge of [false,true]){
+    const f=makerFixture({market,direction,hedge,status:'CANCELED'});
+    await f.client.syncTime();
+    for(const change of [{quantity:f.args.quantity},{symbol:'ETHUSDT'},{clientAlgoId:algo},{type:'MARKET'},
+      {side:f.receipt.side},{triggerPrice:'60000'},{workingType:'CONTRACT_PRICE'},{priceProtect:'TRUE'},
+      {closePosition:'true'},hedge?{reduceOnly:'true'}:{reduceOnly:'false'}]){
+      await assert.rejects(f.client.requestOwnedMakerProtection({...f.stop,...change},f.receipt),/MATCHING_OWN_MAKER/);
+    }
+    for(const change of [{market:'OTHER'},{id:'asbf_'+'d'.repeat(28)},{orderId:124},{status:'FILLED'},{timeInForce:'IOC'}]){
+      await assert.rejects(f.client.requestOwnedMakerProtection(f.stop,{...f.receipt,...change}),/MATCHING_OWN_MAKER/);
+    }
+    assert.equal(f.writeCalls().length,0);
+    await f.client.requestOwnedMakerProtection(f.stop,f.receipt);
+    assert.equal(f.writeCalls().length,1);
+    const applied=new URLSearchParams(f.writeCalls()[0].options.body);
+    assert.equal(applied.get('clientAlgoId'),f.stop.clientAlgoId);
+    assert.equal(applied.get('quantity'),f.receipt.quantity);
+    assert.equal(applied.get('side'),direction==='LONG'?'SELL':'BUY');
+    assert.equal(applied.get('reduceOnly'),hedge?null:'true');
+    await assert.rejects(f.client.requestOwnedMakerProtection(f.stop,f.receipt),/ALREADY_SUBMITTED/);
+    await assert.rejects(f.client.request('newOrder',{...f.args,newClientOrderId:id}),/EXPLICIT_FUTURES_START/);
+    assert.equal(f.writeCalls().length,1);
+  }
+});
+
+test('a failed maker proof read is safe to retry but a lost stop submission is left for reconciliation',async()=>{
+  let unavailable=true;
+  const f=makerFixture({status:'CANCELED',failure:(url,opts)=>{
+    if(unavailable&&opts.method==='GET'&&url.pathname.endsWith('/order'))throw new Error('offline');
+    if(opts.method==='POST')throw new Error('unknown');
+  }});
+  await f.client.syncTime();
+  await assert.rejects(f.client.requestOwnedMakerProtection(f.stop,f.receipt),
+    error=>error.makerProtectionNotSubmitted===true&&error.readFailure.operation==='order');
+  assert.equal(f.writeCalls().length,0);
+  unavailable=false;
+  await assert.rejects(f.client.requestOwnedMakerProtection(f.stop,f.receipt),
+    error=>!error.makerProtectionNotSubmitted&&error.message==='FUTURES_RESULT_UNKNOWN_RECONCILE');
+  await assert.rejects(f.client.requestOwnedMakerProtection(f.stop,f.receipt),/ALREADY_SUBMITTED/);
+  assert.equal(f.writeCalls().length,1);
+});

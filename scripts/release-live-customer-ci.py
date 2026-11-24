@@ -16,7 +16,7 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-version = "0.3.6"
+version = "0.4.1"
 tag = f"v{version}-live-customer"
 repo = os.environ["GITHUB_REPOSITORY"]
 commit = os.environ["GITHUB_SHA"]
@@ -38,6 +38,7 @@ for runner, platform, arch, native_os in [
     assert (report["version"], report["platform"], report["arch"], report["file"]) == (version+"-customer", platform, arch, name)
     assert report["nativeSelfTestPassed"] and report["customerSubscriptionIntegrated"]
     assert report["futuresSettingsRoundTripVerified"] is True
+    assert report["tradeReportingVerified"] is True
     assert report["actualCredentialsUsed"] is False and report["realOrdersSubmitted"] == 0
     assert path.stat().st_size == report["bytes"] and digest(path) == report["sha256"]
     with zipfile.ZipFile(path) as archive:
@@ -50,7 +51,8 @@ for runner, platform, arch, native_os in [
         assert (native["version"], native["platform"], native["arch"]) == (report["version"], native_os, arch)
         assert native["passed"] and native["assetModes"] == {"single": True, "multi": True, "cross": True}
         assert native["externalPositions"] == {"defaultBlocks": True, "saved": True, "restored": True}
-        assert all(native["settingsRoundTrip"].get(key) is True for key in ("restored","localTarget","exchangeValue","summaryVisible","detailsCollapsed","contractLimits","manualPosition","orderCounts"))
+        assert all(native["settingsRoundTrip"].get(key) is True for key in ("restored","localTarget","exchangeValue","summaryVisible","detailsCollapsed","contractLimits","manualPosition","orderCounts","makerDefault","makerRestored"))
+        assert all(native["tradeReporting"].get(key) is True for key in ('perOrder','roundTrip','fees','funding','longLeg','shortLeg','estimatedExitSeparate','unknownNotZero'))
         assert native["unlicensedStartBlocked"] and native["realAccountReads"] == native["exchangeOrders"] == 0
     if platform == "Linux":
         qa_dir = root / f"live-customer-desktop-031-qa-{runner}-{arch}"
@@ -59,6 +61,7 @@ for runner, platform, arch, native_os in [
         assert installed_qa["passed"] and installed_qa["assetModes"] == native["assetModes"]
         assert installed_qa["externalPositions"] == native["externalPositions"]
         assert installed_qa["settingsRoundTrip"] == native["settingsRoundTrip"]
+        assert installed_qa["tradeReporting"] == native["tradeReporting"]
     packages[name] = path
     reports.append(report)
 
@@ -72,7 +75,7 @@ if existing:
 else:
     gh("release", "create", tag, "--target", commit, "--draft", "--prerelease", "--title",
        f"Adaptive Trading Bot Live {version}", "--notes",
-       "See futures wallet balances, external position quantities, order counts and contract minimums in one read-only view. Windows, Linux and both Mac builds passed offline native checks.")
+       "Review order fills, closed-trade profit and loss, actual commissions and funding, plus separate live long/short position costs. Windows, Linux and both Mac builds passed offline native checks. Existing settings keep their execution preference. Maker-first entry is available in Futures settings.")
 release_id = gh("release", "view", tag, "--json", "databaseId", "--jq", ".databaseId")
 def assets():
     return {a["name"]: a for a in json.loads(gh("api", f"repos/{repo}/releases/{release_id}/assets"))}

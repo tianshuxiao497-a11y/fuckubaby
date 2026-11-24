@@ -32,3 +32,18 @@ select,option{font:inherit}
 }
 html{scrollbar-gutter:stable}
 #start-help{min-height:1.6em;margin:5px 0}
+.position-money{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;margin:12px 0;font-size:12px;font-variant-numeric:tabular-nums}
+.position-money[hidden]{display:none}
+.position-money dt{color:#acbdd7}
+.position-money dd{margin:0;text-align:right;white-space:pre-line;overflow-wrap:anywhere}
+.position-money .estimated{margin-top:4px;border-top:1px dashed #41516c;padding-top:6px;color:#b5c4d9}
+.report-switch{margin:10px 0}
+.report-switch button[aria-pressed="true"]{background:#283a59;border-color:#93aacd;color:#fff}
+.trade-report section[hidden],.trade-report .tablewrap[hidden],.trade-report details[hidden]{display:none}
+.trade-report .tablewrap{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}
+.trade-report table{width:max-content;min-width:100%;font-variant-numeric:tabular-nums}
+.trade-report th,.trade-report td{padding:9px 10px;white-space:pre;vertical-align:middle}
+.trade-report th:nth-child(n+3),.trade-report td:nth-child(n+3){text-align:right}
+#cycles-table th:last-child,#cycles-table td:last-child,#orders-table th:last-child,#orders-table td:last-child{position:sticky;right:0;background:#18243a;border-left:1px solid #384967}
+.trade-report details{margin-top:14px}
+.trade-report .report-legend{font-size:11px}

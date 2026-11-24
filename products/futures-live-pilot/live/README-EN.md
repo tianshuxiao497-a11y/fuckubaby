@@ -77,6 +77,14 @@ After restart, sleep or a connection error, explicit rearming is required. The r
 
 Confirmed history debits the durable automatic budget; unknown results do not cause duplicate additions. Parameter edits or reimport of the same ID preserve its usage, and that ID cannot be rebound to another asset or contract. A different ID explicitly creates another budget and should be reviewed as additional exposure.
 
+## Reconcile Futures fills and P&L
+
+A normal check reads account state. If a previously authorized maker entry remains unresolved, a check or reconnect can cancel its remaining quantity and submit a protective stop for a confirmed fill. Consult the original order on Binance if its status is uncertain. Starting a new entry still requires a running strategy.
+
+Save your **策略开仓方式** under Futures account settings. Existing profiles default to IOC. **挂单优先 (Maker preferred)** starts automatic entries with a short-lived maker order. If it receives no fills and its cancellation is confirmed, the next cycle reassesses the signal, budget and risk before allowing one IOC attempt. A partial fill receives protection for the filled quantity. Stops, exits and manual hedge locks use their own execution rules.
+
+Each position card lists unrealized P&L, paid commissions, attributed funding and a separate estimate of the closing fee. In **合约成交与盈亏**, the order view uses actual fills and gives the net before funding. The closed-position view includes opening and closing commissions and attributed funding in the lifetime net. Read each amount in its original currency. Unverified data appears as a dash. A confirmed zero amount shows the currency and zero.
+
 ## Stopping, records and acceptance
 
 Stopping automation does not automatically close Spot inventory or Futures positions. Accepted exchange stops remain subject to exchange processing. Local take-profit, trailing exits and automatic margin actions stop at shutdown. Entry and protection are separate requests with an unprotected interval; neither stop execution nor price is guaranteed. Preserve uncertain requests and inspect Binance promptly, handling the account personally if needed.

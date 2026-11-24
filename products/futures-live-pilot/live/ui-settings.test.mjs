@@ -13,7 +13,11 @@ function element(){
     parentElement:{after(){}},listeners:{},children:[],dataset:{},
     addEventListener(name,fn){(this.listeners[name]??=[]).push(fn);},
     input(value){this.value=String(value);for(const fn of this.listeners.input??[])fn();},
-    setAttribute(){},replaceChildren(){},querySelector(){return {};},
+    setAttribute(name,value){this[name]=String(value);},querySelector(){return {};},
+    replaceChildren(...nodes){
+      for(const node of [...this.children])node.remove();
+      for(const node of nodes)for(const child of (node.isFragment?[...node.children]:[node]))this.append(child);
+    },
     append(node){this.insertBefore(node,null);},
     insertBefore(node,next){
       if(node.parent)node.remove();
@@ -41,7 +45,7 @@ async function fixture(){
     stop:()=>{state.running=false;return response(state);}
   };
   const context=vm.createContext({
-    document:{getElementById:$,querySelectorAll:()=>[],createElement:element,createDocumentFragment:element},
+    document:{getElementById:$,querySelectorAll:()=>[],createElement:element,createDocumentFragment:()=>Object.assign(element(),{isFragment:true})},
     location:{hash:'#fixture',pathname:'/'},history:{replaceState(){}},setInterval(){},
     fetch:async(url,request)=>{
       const action=url.slice(5),body=request.body?JSON.parse(request.body):undefined;
@@ -93,6 +97,22 @@ test('invalid local input and server errors are visible and the draft survives',
   assert.equal(state.settings.leverage,150);assert.equal($('leverage').value,'102');
 });
 
+test('maker preferred applies to saved automatic entries and reopens from the stored setting',async()=>{
+  const {$,state,refresh,calls}=await fixture();
+  assert.equal($('opening-execution').value,'ioc');
+  $('opening-execution').input('makerPreferred');
+  assert.match($('form-status').textContent,/尚未保存.*挂单优先/);
+  await $('preflight').onclick();await refresh();
+  assert.equal($('opening-execution').value,'makerPreferred');
+  assert.match($('saved-settings').textContent,/立即尝试成交/);
+  await $('apply-settings').onclick();
+  assert.equal(state.settings.openingExecution,'makerPreferred');
+  await refresh();
+  assert.match($('saved-settings').textContent,/挂单优先/);
+  assert.equal($('opening-execution').value,'makerPreferred');
+  assert.equal(calls.includes('contract-settings'),false);
+});
+
 test('stop then restart requires fresh confirmation; reverted edits do not keep arming disabled',async()=>{
   const {$,calls}=await fixture();
   assert.equal($('wallet-status').textContent,'账户已核对');
@@ -110,6 +130,17 @@ test('stop then restart requires fresh confirmation; reverted edits do not keep 
   assert.equal($('start').disabled,false);
   $('start').onclick();await tick();
   assert.deepEqual(calls.filter(a=>a==='start'||a==='stop'),['start','stop','start']);
+});
+
+test('a rejected start stays visible beside the button after status polling',async()=>{
+  const {$,routes,refresh}=await fixture();
+  $('confirmation').input('START REAL FUTURES TRADING');
+  routes.start=()=>({ok:false,json:async()=>({error:'RECONCILE_PENDING_FUTURES_RESULT_FIRST'})});
+  await $('start').onclick();
+  await refresh();
+  assert.match($('start-help').textContent,/启动未完成.*核对原订单/);
+  assert.match($('notice').textContent,/启动未完成.*核对原订单/);
+  assert.match($('running').textContent,/已停止/);
 });
 
 test('read-only wallet rows keep identity during updates and order counts stay separate from positions',async()=>{
@@ -158,4 +189,34 @@ test('one opportunity below minimum waits while account-wide entry locks still b
   await refresh();
   assert.equal($('start').disabled,true);
   assert.match($('start-help').textContent,/当日回撤/);
+});
+
+test('trade report distinguishes exchange fills, native fees, funding scope, unverified results and estimated exit cost',async()=>{
+  const {$,state,refresh}=await fixture();
+  const trade={market:'USD_M',symbol:'BTCUSDT',direction:'SHORT',quantity:'0.003',quantityUnit:'BTC',quoteAsset:'USDT',marginAsset:'USDT'};
+  state.snapshot.tradeReport={
+    orders:[{...trade,time:1700000000000,intent:'CLOSE_SHORT',status:'FILLED',averagePrice:'60000.00',gross:'0.50',fees:{BNB:'0.00002'},netExFunding:{BNB:'-0.00002',USDT:'0.50'}}],
+    roundTrips:[{...trade,openedAt:1700000000000,closedAt:1700000001000,entryPrice:'60005',exitPrice:'60000',gross:'0.5',openFees:{USDT:'0'},closeFees:{BNB:'0.00002'},funding:null,net:null}],
+    positions:{SHORT:{...trade,unrealized:'-0.1200',paidFees:{USDT:'0.15',BNB:'0.000001'},funding:{USDT:'0.0004'},estimatedCloseFee:'0.1465'}},
+    unattributedFunding:[{market:'USD_M',symbol:'BTCUSDT',time:1700000000000,asset:'USDT',amount:'-0.013'}],
+  };
+  await refresh();
+  const cells=id=>$(id).children[0].children.map(cell=>cell.textContent);
+  assert.deepEqual(cells('orders').slice(2),['平空','已成交','0.003 BTC','60000 USDT','+0.5 USDT','0.00002 BNB','-0.00002 BNB\n+0.5 USDT']);
+  assert.deepEqual(cells('closed-cycles').slice(4),['+0.5 USDT','0 USDT','0.00002 BNB','—','—']);
+  assert.equal(cells('unattributed-rows')[2],'-0.013 USDT');
+  assert.equal($('short-unrealized').textContent,'-0.12 USDT');
+  assert.equal($('short-paid-fees').textContent,'0.000001 BNB\n0.15 USDT');
+  assert.equal($('short-funding').textContent,'+0.0004 USDT');
+  assert.equal($('short-exit-fee').textContent,'0.1465 USDT');
+  assert.equal($('long-accounting').hidden,true);
+  $('report-orders').onclick();
+  assert.equal($('order-view').hidden,false);assert.equal($('cycle-view').hidden,true);
+  state.snapshot.tradeReport.roundTrips[0].funding={USDT:'0'};
+  state.snapshot.tradeReport.roundTrips[0].net={USDT:'0.5',BNB:'-0.00002'};
+  state.snapshot.tradeReport.unattributedFunding=[];
+  await refresh();
+  assert.deepEqual(cells('closed-cycles').slice(-2),['0 USDT','-0.00002 BNB\n+0.5 USDT']);
+  assert.equal($('unattributed-funding').hidden,true);
+  assert.equal($('order-view').hidden,false);
 });

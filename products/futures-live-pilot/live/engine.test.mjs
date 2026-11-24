@@ -14,7 +14,7 @@ test('initial margin accepts 0.01–100% and preserves the fixed daily limit and
   assert.throws(()=>validateSettings({...settings,marginPercent:10,leverage:1.5}),/EXPLICIT_FUTURES_MARGIN_LEVERAGE_AND_RISK_REQUIRED/);
   assert.throws(()=>validateSettings({...settings,marginPercent:10,dailyLossPercent:99}),/EXPLICIT_FUTURES_MARGIN_LEVERAGE_AND_RISK_REQUIRED/);
 });
-async function fixture(t,{market='USD_M',direction='LONG',hedge=false,timeout=false,reject=false,unmanaged=false,algoUnsupported=false,usdBalance='1000'}={}){
+async function fixture(t,{market='USD_M',direction='LONG',hedge=false,timeout=false,reject=false,unmanaged=false,algoUnsupported=false,usdBalance='1000',maker=null}={}){
   const profile=await mkdtemp(join(tmpdir(),'asbf-engine-'));let clock=initialTime,forceClose=false,sequence=100,protection=null,collateralPrice='10000';
   const cash={USD_M:{USDT:market==='USD_M'?usdBalance:'0'},COIN_M:{BTC:market==='COIN_M'?'0.1':'0'}};
   const orders=new Map(),fills=new Map(),positions={USD_M:null,COIN_M:null},income={USD_M:[],COIN_M:[]},calls=[];
@@ -26,6 +26,25 @@ async function fixture(t,{market='USD_M',direction='LONG',hedge=false,timeout=fa
   const clients={};
   for(const kind of ['USD_M','COIN_M'])clients[kind]={
     market:kind,armed:false,settings:false,arm(value){assert.equal(value,FUTURES_CONFIRMATION);this.armed=true;},armSettings(value){assert.equal(value,SETTINGS_CONFIRMATION);this.settings=true;},disarm(){this.armed=false;this.settings=false;},async syncTime(){return clock;},serverNow(){return clock;},
+    async requestOwnedMakerCancel(pending,order){
+      assert.equal(order.clientOrderId,pending.id);assert.equal(order.orderId,pending.exchangeOrderId);
+      calls.push({kind,name:'makerCancel',armed:this.armed});
+      if(maker.cancelOffline)throw new Error('CANCEL_NETWORK_TIMEOUT');
+      if(!maker.fillAtCancel)orders.get(pending.id).status='CANCELED';
+      maker.terminalVisible=true;
+      if(maker.cancelAckLost)throw new Error('CANCEL_ACK_LOST');
+    },
+    async requestOwnedMakerProtection(args,receipt){
+      const saved=JSON.parse(await readFile(join(profile,'futures-ledger.json'),'utf8'));
+      assert.equal(saved.makerProtectionDue,receipt.id);
+      assert.equal(saved.pending.id,args.clientAlgoId);
+      assert.equal(receipt.quantity,args.quantity);
+      calls.push({kind,name:'makerProtection',armed:this.armed,args});
+      if(maker.protectionReadOffline)throw Object.assign(new Error('RECEIPT_READ_OFFLINE'),{makerProtectionNotSubmitted:true});
+      protection={...args,market:kind,algoId:++sequence,algoStatus:'NEW',orderType:args.type,reduceOnly:args.reduceOnly==='true',actualOrderId:0};
+      if(maker.protectionAckLost)throw new Error('STOP_ACK_LOST');
+      return {algoId:protection.algoId};
+    },
     async request(name,args={}){
       calls.push({kind,name,args:structuredClone(args)});
       if(name==='account')return {canTrade:true,assets:Object.entries(cash[kind]).map(([asset,walletBalance])=>({asset,walletBalance,unrealizedProfit:positions[kind]?pnl({market:kind,side:positions[kind].direction,quantity:positions[kind].quantity,entryPrice:positions[kind].entryPrice,exitPrice:'10000',contractSize:kind==='USD_M'?'1':'100'}):'0'}))};
@@ -46,20 +65,26 @@ async function fixture(t,{market='USD_M',direction='LONG',hedge=false,timeout=fa
       if(name==='income')return income[kind].filter(e=>e.time>=args.startTime&&e.time<=args.endTime);
       if(name==='order'){
         const row=args.orderId?[...orders.values()].find(r=>r.orderId===args.orderId):orders.get(args.origClientOrderId);
-        if(!row){const error=new Error('not found');error.binanceCode=-2013;throw error;}return structuredClone(row);
+        if(!row){const error=new Error('not found');error.binanceCode=-2013;throw error;}
+        if(row.timeInForce==='GTX'&&maker?.expiredExternally)return {...row,status:'EXPIRED'};
+        if(row.timeInForce==='GTX'&&maker?.fillAtCancel&&!maker.terminalVisible)return {...row,status:'NEW',executedQty:'0'};
+        return structuredClone(row);
       }
       if(name==='trades')return structuredClone(fills.get(args.orderId)??[]);
       if(name==='newOrder'){
         assert.equal(this.armed,true);const saved=JSON.parse(await readFile(join(profile,'futures-ledger.json'),'utf8'));assert.equal(saved.pending.id,args.newClientOrderId);
         if(reject){const error=new Error('rejected');error.binanceCode=-2019;error.definitiveRejection=true;throw error;}
+        const postOnly=args.timeInForce==='GTX';
+        if(postOnly&&maker.rejection)throw Object.assign(new Error('simulated post rejection'),maker.rejection);
+        const quantity=postOnly?(maker.quantity??args.quantity):args.quantity;
         const close=args.reduceOnly==='true'||(args.positionSide==='LONG'&&args.side==='SELL')||(args.positionSide==='SHORT'&&args.side==='BUY');
         const old=positions[kind],side=close?old.direction:(args.side==='BUY'?'LONG':'SHORT'),size=kind==='USD_M'?'1':'100',price=args.price??'10000';
         const profit=close?pnl({market:kind,side,quantity:args.quantity,entryPrice:old.entryPrice,exitPrice:price,contractSize:size}):'0';
-        const value=kind==='USD_M'?multiply(units(args.quantity),units(price)):units(args.quantity)*units(size)/units(price),fee=decimal(multiply(value,units('0.0005'))),asset=kind==='USD_M'?'USDT':'BTC';
+        const value=kind==='USD_M'?multiply(units(quantity),units(price)):units(quantity)*units(size)/units(price),fee=decimal(multiply(value,units('0.0005'))),asset=kind==='USD_M'?'USDT':'BTC';
         cash[kind][asset]=decimal(signedUnits(cash[kind][asset])+signedUnits(profit)-units(fee));
-        positions[kind]=close?null:{symbol:args.symbol,direction:side,quantity:args.quantity,entryPrice:price,positionSide:args.positionSide};
-        const number=++sequence,row={...args,clientOrderId:args.newClientOrderId,orderId:number,origQty:args.quantity,executedQty:args.quantity,status:'FILLED'};
-        orders.set(args.newClientOrderId,row);fills.set(number,[{symbol:args.symbol,orderId:number,id:number,side:args.side,positionSide:args.positionSide,qty:args.quantity,price,commission:fee,commissionAsset:asset,realizedPnl:profit,time:clock}]);
+        if(units(quantity))positions[kind]=close?null:{symbol:args.symbol,direction:side,quantity,entryPrice:price,positionSide:args.positionSide};
+        const number=++sequence,row={...args,clientOrderId:args.newClientOrderId,orderId:number,origQty:args.quantity,executedQty:quantity,status:quantity===args.quantity?'FILLED':units(quantity)?'PARTIALLY_FILLED':'NEW'};
+        orders.set(args.newClientOrderId,row);fills.set(number,units(quantity)?[{symbol:args.symbol,orderId:number,id:number,side:args.side,positionSide:args.positionSide,qty:quantity,price,commission:fee,commissionAsset:asset,realizedPnl:profit,time:clock}]:[]);
         if(timeout)throw new Error('ORDER_RESULT_UNKNOWN');return {orderId:number};
       }
       if(name==='newProtection'){assert.equal(this.armed,true);protection={...args,market:kind,algoId:++sequence,algoStatus:'NEW',orderType:args.type,reduceOnly:args.reduceOnly==='true',actualOrderId:0};return {algoId:protection.algoId};}
@@ -70,7 +95,7 @@ async function fixture(t,{market='USD_M',direction='LONG',hedge=false,timeout=fa
       throw new Error('UNEXPECTED_FAKE_REQUEST_'+name);
     },
   };
-  const settings={market,symbol:symbolOf(market),marginMode:'ISOLATED',leverage:10,marginPercent:2,directionMode:'both',dailyLossPercent:20,externalStrategy:null};
+  const settings={market,symbol:symbolOf(market),marginMode:'ISOLATED',leverage:10,marginPercent:2,directionMode:'both',dailyLossPercent:20,externalStrategy:null,...(maker?{openingExecution:'makerPreferred'}:{})};
   const engine=new FuturesEngine({profile,clients,settings,now:()=>clock,signalFactory:({position})=>({intent:position?(forceClose?'CLOSE_'+position.direction:null):'OPEN_'+direction,reason:'FIXTURE_RESEARCH_ONLY',risk:{stopLossPercent:1,takeProfitPercent:2,trailingPercent:0},candles:[],values:{}})});
   await engine.acquire();t.after(async()=>{await engine.close();await rm(profile,{recursive:true,force:true});});
   return {engine,calls,clients,settings,advance:ms=>{clock+=ms;},collateralPrice:value=>{collateralPrice=value;},forceClose:()=>{forceClose=true;},async triggerStop(){
@@ -88,6 +113,113 @@ for(const market of ['USD_M','COIN_M'])for(const direction of ['LONG','SHORT'])t
   await f.engine.start(FUTURES_CONFIRMATION);await f.engine.check({execute:true});
   assert.equal(f.engine.state.position.direction,direction);assert.ok(f.engine.state.protection);assert.equal(f.engine.state.orders.length,1);
   f.forceClose();await f.engine.check({execute:true});assert.equal(f.engine.state.position,null);assert.equal(f.engine.state.protection,null);assert.equal(f.engine.state.orders.length,2);
+  const countsBeforeReport=f.calls.length;
+  const report=JSON.parse(JSON.stringify(f.engine.last)).tradeReport;
+  assert.equal(report.roundTrips.length,1);
+  assert.equal(report.roundTrips[0].market,market);
+  assert.equal(report.roundTrips[0].direction,direction);
+  assert.equal(report.orders.length,2);
+  assert.equal(f.calls.length,countsBeforeReport);
+});
+const openingRequests=f=>f.calls.filter(c=>c.name==='newOrder').map(c=>c.args);
+for(const [market,direction] of [['USD_M','LONG'],['COIN_M','SHORT']])test(market+' maker first waits at the passive quote and retries zero fills only on the next eligible tick',async t=>{
+  const f=await fixture(t,{market,direction,maker:{quantity:'0'}});
+  await f.engine.start(FUTURES_CONFIRMATION);
+  f.engine.waitForMaker=async ms=>f.advance(ms);
+  await f.engine.check({execute:true});
+  assert.equal(openingRequests(f).length,1);
+  const [first]=openingRequests(f);
+  assert.equal(first.timeInForce,'GTX');assert.equal(first.price,direction==='LONG'?'9999':'10000');
+  assert.equal(f.engine.state.orders[0].status,'CANCELED');
+  assert.equal(f.engine.state.position,null);
+  assert.equal(f.calls.filter(c=>c.name==='makerCancel').length,1);
+  await f.engine.check();
+  assert.equal(openingRequests(f).length,1);
+  await f.engine.check({execute:true});
+  assert.deepEqual(openingRequests(f).map(o=>o.timeInForce),['GTX','IOC']);
+  assert.ok(units(openingRequests(f)[1].quantity)<=units(first.quantity));
+  assert.ok(f.engine.state.position);assert.ok(f.engine.state.protection);
+  await f.engine.check({execute:true});
+  assert.equal(openingRequests(f).length,2);
+});
+test('a partial maker fill cancels immediately and protects exactly the actual quantity; exits retain their normal execution',async t=>{
+  const f=await fixture(t,{maker:{quantity:'0.004'}});
+  f.engine.waitForMaker=()=>assert.fail('partial fill must not keep resting');
+  await f.engine.start(FUTURES_CONFIRMATION);
+  await f.engine.check({execute:true});
+  assert.equal(f.engine.state.position.quantity,'0.004');
+  assert.equal(f.engine.state.protection.quantity,'0.004');
+  assert.equal(f.engine.state.makerProtectionDue,null);
+  assert.equal(f.engine.state.fills.length,1);
+  await f.engine.check({execute:true});
+  assert.equal(openingRequests(f).length,1);
+  f.forceClose();await f.engine.check({execute:true});
+  assert.equal(openingRequests(f)[1].timeInForce,'IOC');assert.equal(f.engine.state.position,null);
+});
+test('a full fill racing stop and cancellation receives its own protection after disarm, without another entry',async t=>{
+  const f=await fixture(t,{maker:{fillAtCancel:true}});
+  f.engine.waitForMaker=async()=>f.engine.stop();
+  await f.engine.start(FUTURES_CONFIRMATION);
+  await f.engine.check({execute:true});
+  assert.equal(f.engine.running,false);
+  assert.equal(f.calls.find(c=>c.name==='makerCancel').armed,false);
+  assert.equal(f.calls.find(c=>c.name==='makerProtection').armed,false);
+  assert.equal(f.engine.state.fills.length,1);assert.ok(f.engine.state.protection);
+  assert.equal(openingRequests(f).length,1);assert.equal(f.engine.makerRetry,null);
+});
+test('unconfirmed partial cancellation survives restart; signed reconciliation protects once without rearming',async t=>{
+  const maker={quantity:'0.004',cancelOffline:true},f=await fixture(t,{maker});
+  await f.engine.start(FUTURES_CONFIRMATION);
+  await assert.rejects(f.engine.check({execute:true}),/MAKER_CANCEL_UNCONFIRMED/);
+  const id=f.engine.state.pending.id;
+  assert.ok(f.engine.state.pending.exchangeOrderId);assert.equal(f.engine.state.fills.length,0);
+  await f.engine.close();
+  const restored=new FuturesEngine({profile:f.engine.profile,clients:f.clients,settings:f.settings,now:f.engine.now,signalFactory:f.engine.signalFactory});
+  await restored.acquire();t.after(()=>restored.close());
+  assert.equal(restored.needsMakerCleanup,true);maker.cancelOffline=false;
+  await restored.check();
+  assert.equal(restored.running,false);assert.equal(restored.needsMakerCleanup,false);
+  assert.equal(restored.state.orders[0].id,id);assert.equal(restored.state.position.quantity,'0.004');
+  assert.equal(restored.state.protection.quantity,'0.004');assert.equal(restored.state.fills.length,1);
+  assert.equal(openingRequests(f).length,1);assert.equal(f.calls.filter(c=>c.name==='makerProtection').length,1);
+});
+test('a failed receipt read and a lost stop acknowledgement recover without duplicating a protection',async t=>{
+  const maker={protectionReadOffline:true},f=await fixture(t,{maker});
+  await f.engine.start(FUTURES_CONFIRMATION);
+  await assert.rejects(f.engine.check({execute:true}),/RECEIPT_READ_OFFLINE/);
+  assert.equal(f.engine.state.pending,null);assert.ok(f.engine.state.makerProtectionDue);
+  maker.protectionReadOffline=false;maker.protectionAckLost=true;
+  await assert.rejects(f.engine.check(),/STOP_ACK_LOST/);
+  assert.equal(f.engine.state.pending.kind,'PROTECTION');
+  const attempts=f.calls.filter(c=>c.name==='makerProtection').length;
+  await f.engine.check();
+  assert.equal(f.calls.filter(c=>c.name==='makerProtection').length,attempts);
+  assert.equal(f.engine.state.makerProtectionDue,null);assert.ok(f.engine.state.protection);
+  assert.equal(openingRequests(f).length,1);assert.equal(f.engine.running,false);
+});
+test('post-only rejection needs a known -5022 and non-existent order; vanished signals discard the taker leg',async t=>{
+  const maker={rejection:{definitiveRejection:true,binanceCode:-5022}},f=await fixture(t,{maker});
+  await f.engine.start(FUTURES_CONFIRMATION);await f.engine.check({execute:true});
+  assert.equal(f.engine.state.orders[0].rejectionCode,-5022);
+  const signal=f.engine.signalFactory;
+  f.engine.signalFactory=parameters=>({...signal(parameters),intent:null});
+  await f.engine.check({execute:true});assert.equal(openingRequests(f).length,1);
+  f.engine.signalFactory=signal;maker.rejection={binanceCode:-1007};
+  await assert.rejects(f.engine.check({execute:true}),/simulated post rejection/);
+  assert.ok(f.engine.state.pending);assert.equal(f.engine.makerRetry,null);
+  await assert.rejects(f.engine.check(),/FUTURES_ORDER_RESULT_UNRESOLVED_DO_NOT_RESUBMIT/);
+  assert.deepEqual(openingRequests(f).map(r=>r.timeInForce),['GTX','GTX']);
+});
+test('externally expired or ambiguously canceled zero-fill orders never authorize an IOC fallback',async t=>{
+  for(const scenario of [{expiredExternally:true},{cancelAckLost:true}]){
+    const f=await fixture(t,{maker:{quantity:'0',...scenario}});
+    f.engine.waitForMaker=async ms=>f.advance(ms);
+    await f.engine.start(FUTURES_CONFIRMATION);
+    await f.engine.check({execute:true});
+    assert.equal(f.engine.state.pending,null);assert.equal(f.engine.state.position,null);
+    await f.engine.check({execute:true});
+    assert.deepEqual(openingRequests(f).map(r=>r.timeInForce),['GTX','GTX']);
+  }
 });
 for(const market of ['USD_M','COIN_M'])test(market+' read-only workspace exposes contract limits and the magnitude of a manual short',async t=>{
   const {engine,clients,calls,settings}=await fixture(t,{market});

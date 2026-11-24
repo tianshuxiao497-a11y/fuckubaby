@@ -1,10 +1,10 @@
-# Adaptive Trading Bot Live · Customer subscription edition 0.3.6
+# Adaptive Trading Bot Live · Customer subscription edition 0.4.1
 
-A local real-money workspace for Binance Spot and USD-M/COIN-M perpetual futures. Account checks are read-only. Trading needs your explicit manual confirmation. There are no promised returns or guaranteed loss limits.
+A local real-money workspace for Binance Spot and USD-M/COIN-M perpetual futures. A normal account check reads balances and order status. Opening trades requires your explicit start confirmation. If a previously authorized maker entry is still unresolved, a Futures check or reconnect can cancel its remaining quantity and submit a protective stop for its confirmed fill. There are no promised returns or guaranteed loss limits.
 
 ## Installation and Whop license
 
-Extract the full ZIP. Windows x64: run the included EXE installer. Ubuntu/Debian x64: install the DEB using the package manager; `sudo apt install ./AdaptiveTradingBot-Live-Customer-0.3.6-linux-amd64.deb` resolves dependencies. On the matching Apple Silicon or Intel Mac, move Adaptive Trading Bot Live Customer.app to Applications.
+Extract the full ZIP. Windows x64: run the included EXE installer. Ubuntu/Debian x64: install the DEB using the package manager; `sudo apt install ./AdaptiveTradingBot-Live-Customer-0.4.1-linux-amd64.deb` resolves dependencies. On the matching Apple Silicon or Intel Mac, move Adaptive Trading Bot Live Customer.app to Applications.
 
 This edition has its own application and data profiles. It does not adopt the old personal or Testnet installation or positions. Do not run multiple bots against the same account concurrently.
 
@@ -86,10 +86,20 @@ After restart, sleep or a connection error, explicit rearming is required. The r
 
 Confirmed history debits the durable automatic budget; unknown results do not cause duplicate additions. Parameter edits or reimport of the same ID preserve its usage, and that ID cannot be rebound to another asset or contract. A different ID explicitly creates another budget and should be reviewed as additional exposure.
 
+## Reconcile Futures fills and P&L
+
+Under Futures account settings, **策略开仓方式** controls automatic entries. Existing profiles keep **IOC**, which attempts an immediate fill. **挂单优先 (Maker preferred)** first posts a short-lived maker order. If it receives no fills and its cancellation is confirmed, the next cycle checks the signal, budget and risk again before allowing one IOC attempt. A partial fill receives protection for the filled quantity. Stop orders, exits and manual hedge locks keep their own execution rules.
+
+Each position card lists unrealized P&L, commissions already charged to that leg, attributed funding and a separate estimate of the fee to close. In **合约成交与盈亏**, the order view shows filled quantity, average fill price, gross realized P&L, actual commission and the order net before funding. The closed-position view groups the complete cycle and includes opening commissions, closing commissions and attributed funding in its net. Amounts remain in their original currencies. A dash marks unavailable or unverified data. Confirmed zero amounts show the currency and zero.
+
 ## Stopping, records and acceptance
 
 Stopping automation does not automatically close Spot inventory or Futures positions. Accepted exchange stops remain subject to exchange processing. Local take-profit, trailing exits and automatic margin actions stop at shutdown. Entry and protection are separate requests with an unprotected interval; neither stop execution nor price is guaranteed. Preserve uncertain requests and inspect Binance promptly, handling the account personally if needed.
 
 Keep the ledger if a reconciliation fails. Check positions and orders for the selected contract on Binance. Export CSV/review reports before discussing new rules. No customer messages or paid AI calls are automatic.
 
-Profiles remain in `AdaptiveSpotBot/LivePersonal` and `AdaptiveSpotBot/FuturesPersonal` under Windows LOCALAPPDATA, Linux XDG_DATA_HOME (default `~/.local/share`) or macOS `~/Library/Application Support`. Back up the entire directory only after exit and reconciliation. API keys remain encrypted locally and are not uploaded to Whop or Cloudflare.
+Customer profiles are in the `spot` and `futures` subfolders of the directory for your system. Back up the full profile after reconciling and exiting the application. API keys are encrypted locally.
+
+- Windows: `%APPDATA%/Adaptive Trading Bot Live Customer/profile/`
+- Linux: `$XDG_CONFIG_HOME/Adaptive Trading Bot Live Customer/profile/`, normally `~/.config/Adaptive Trading Bot Live Customer/profile/`
+- macOS: `~/Library/Application Support/Adaptive Trading Bot Live Customer/profile/`

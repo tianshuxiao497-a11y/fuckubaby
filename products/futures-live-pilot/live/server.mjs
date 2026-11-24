@@ -38,6 +38,7 @@ export async function createFuturesServer({profile=defaultProfile(),port=0,now=D
   function stop(){stopGeneration++;engine?.stop();record('FUTURES_MANUAL_STOP');}
   const status=()=>({version:FUTURES_VERSION,environment:'BINANCE_FUTURES_MAINNET',tradingAuthorized:tradingAllowed()===true,edition:'personal',running:engine?.running??false,autoMarginArmed:engine?.autoMarginArmed??false,unlocked:!!engine,vaultExists,settings,preferences:prefs,
     connected:!!engine?.last?.accountChecked&&!engine.error&&now()>=engine.last.localCheckedAt&&now()-engine.last.localCheckedAt<30000,snapshot:engine?.last??null,pending:!!engine?.state?.pending,error:engine?.error??null,reconnecting:!!engine&&prefs.autoConnect&&failures>0,
+    tradeReport:engine&&!engine.last?engine.tradeReport():null,
     walletRead:engine?.walletRead??null,accountModes:engine?.accountModes??null,marginCapacity:engine?.marginCapacity??null,externalExposure:engine?.externalExposure??null,readFailure:engine?.readFailure??null,checking:!!monitorRead,logs:logs.slice(-100)});
   async function replace(data,persistBeforeActivation){
     if(engine?.running||engine?.autoMarginArmed||engine?.busy||engine?.state?.pending||ownedPositions(engine?.state).length)throw new Error('FLAT_STOPPED_RECONCILED_FUTURES_PROFILE_REQUIRED');
@@ -58,7 +59,9 @@ export async function createFuturesServer({profile=defaultProfile(),port=0,now=D
     engine=candidate;secret=savedCredentials;settings=config;prefs=savedPrefs;failures=0;
   }
   async function monitor(){
-    if(closing||!engine||(!engine.running&&!engine.autoMarginArmed&&!prefs.autoConnect)||actionBusy||engine.busy||now()<nextCheck)return;
+    const cleanup=engine?.needsMakerCleanup;
+    if(closing||!engine||(!engine.running&&!engine.autoMarginArmed&&!prefs.autoConnect&&!cleanup)||actionBusy||engine.busy||
+      (now()<nextCheck&&!(cleanup&&nextCheck===Infinity)))return;
     try{
       const execute=engine.running||engine.autoMarginArmed;
       const check=engine.check({execute});

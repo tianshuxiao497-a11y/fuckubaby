@@ -1,15 +1,15 @@
-# Adaptive Trading Bot Live · 客户订阅版 0.3.6
+# Adaptive Trading Bot Live · 客户订阅版 0.4.1
 
 这是本机运行的真实资金软件，包含现货和 U 本位／币本位永续合约。请先完成只读检查，交易必须由你手动确认。没有收益保证，风险规则也不能保证最大亏损。
 
 ## 安装和软件许可证
 
-1. 完整解压与你的系统对应的 ZIP。Windows x64 运行 EXE 安装器；Ubuntu／Debian x64 使用系统包安装器安装 DEB（推荐终端 `sudo apt install ./AdaptiveTradingBot-Live-Customer-0.3.6-linux-amd64.deb`）；Mac 按 Apple 芯片 arm64 或 Intel x64 选择，把 Adaptive Trading Bot Live Customer.app 移入 Applications。
+1. 完整解压与你的系统对应的 ZIP。Windows x64 运行 EXE 安装器；Ubuntu／Debian x64 使用系统包安装器安装 DEB（推荐终端 `sudo apt install ./AdaptiveTradingBot-Live-Customer-0.4.1-linux-amd64.deb`）；Mac 按 Apple 芯片 arm64 或 Intel x64 选择，把 Adaptive Trading Bot Live Customer.app 移入 Applications。
 2. 本版与旧自用版、Testnet 使用不同的应用及配置目录，不会自动迁移或接管旧仓位。不要让两个机器人同时操作同一个交易账户。
 3. 使用购买这个实盘商品的 Whop 账号，打开订单和 Software，复制软件许可证：
    https://whop.com/adaptive-trading-bot-live/exp_1vOy7FcD1W5Xml/app/
 4. 在软件窗口顶部的“Whop 软件许可证”粘贴，点击“验证许可证”。这里不能填写 Whop 商户 API Key、币安 API Key 或旧测试版许可证。
-5. 授权有效后再配置自己的币安正式账户。保存或只读连接不会下单；现货与合约分别需要你输入指定确认文字并启动。
+5. 授权有效后配置自己的币安正式账户。首次保存与账户核对不会开新仓。现货与合约分别需要你输入指定确认文字并启动。合约核对和重连也会处理上一次已授权的 Maker 委托，尝试撤掉未成交余量，并按核实的成交仓位补挂止损。
 
 每个许可证绑定一台设备，同时仅允许一个运行会话。换机联系卖家重置；同机异常退出后可能需等待最多约 120 秒释放旧会话。许可证每 30 秒联网核验，签名授权最多 120 秒且不超过会员有效期。取消续费通常保留已生效期限，实际以 Whop 的会员状态和有效期为准。过期、撤权或无法核验会停止自动策略和本机自动追加，不会自动平仓；已经接受的交易所保护单仍需在币安核对。合约已有程序仓位保留手动平仓入口。恢复联网或续费后不会自动重启交易。
 
@@ -106,10 +106,22 @@ Windows 与 Mac 版本未签名，Mac 未经 Apple 公证。请核对来源和�
 
 累计用量确认后才计入持久账本；超时不会重复追加。重复导入或修改同 ID 的参数不会清零用量，不同币种／合约也不能复用同一个 ID。另设新 ID 表示用户明确新建另一份预算，应自行核对累计投入。
 
+## 核对合约成交与盈亏
+
+在合约账户设置的「策略开仓方式」可选「立即尝试成交（IOC）」或「挂单优先」。旧配置默认使用 IOC。挂单优先会先短时挂单。若完全未成交并已确认撤单，下一轮重新核对信号、预算和风控后，最多尝试一次 IOC。部分成交后按实际数量保护。此选择仅影响策略开仓，止损、平仓和手动锁仓各自按原规则执行。
+
+在合约总览查看多仓或空仓卡。未实现盈亏随行情变化。「本仓已扣手续费」来自实际成交，「预计平仓费」按当前费率和价格单独估算。
+
+在“合约成交与盈亏”中，“逐笔委托与成交”显示每笔委托的实际成交量、均价、毛盈亏、手续费和本单净额。“已平仓盈亏”按开仓到完全平仓的周期汇总，两端手续费和已归属资金费均计入该周期的净盈亏。按实扣币种逐项核对，例如 USDT 盈亏和 BNB 手续费会分别显示。若历史数据不完整或资金费归属待核对，相应金额显示“—”。已核实的零金额显示币种和 0。
+
 ## 停止、关机与异常
 
 停止策略同时停用合约交易和本机 JSON 自动追加，但不把已有仓位自动平掉。已确认的交易所止损保留。本机止盈、追踪退出和自动追加在关机后停止。开仓与提交保护是两个请求，存在无保护间隙；止损触发和成交价都不保证。出现无法核对的委托或保护时，保留记录并立即到币安查看，需要时本人处理。
 
 核对异常时请保留账本，到币安检查所选合约的持仓和委托。先导出 CSV 与复盘，再讨论新规则；软件不会自动向客户发消息或调用付费 AI。
 
-配置位置：Windows `%LOCALAPPDATA%/AdaptiveSpotBot/LivePersonal`、`.../FuturesPersonal`；Linux 默认 `~/.local/share/AdaptiveSpotBot/` 下对应目录；Mac `~/Library/Application Support/AdaptiveSpotBot/` 下对应目录。仅在程序退出、原请求核对后备份整个目录。密钥加密保存在本机，不上传到 Whop 或 Cloudflare。
+客户版的现货配置放在下列目录的 `spot` 文件夹，合约配置放在 `futures` 文件夹。请在核对原请求、退出程序后备份整个配置目录。密钥在本机加密保存。
+
+- Windows 使用 `%APPDATA%/Adaptive Trading Bot Live Customer/profile/`
+- Linux 使用 `$XDG_CONFIG_HOME/Adaptive Trading Bot Live Customer/profile/`，默认是 `~/.config/Adaptive Trading Bot Live Customer/profile/`
+- macOS 使用 `~/Library/Application Support/Adaptive Trading Bot Live Customer/profile/`

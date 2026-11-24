@@ -1,5 +1,5 @@
 import {createHmac,createPrivateKey,sign,constants} from 'node:crypto';
-import {family} from './math.mjs';
+import {family,units} from './math.mjs';
 import {contractSymbol} from './market.mjs';
 export const FUTURES_CONFIRMATION='START REAL FUTURES TRADING';
 export const SETTINGS_CONFIRMATION='APPLY FUTURES SETTINGS';
@@ -58,8 +58,23 @@ async function boundedJson(response){
   catch{await reader.cancel().catch(()=>{});throw new Error('INVALID_FUTURES_RESPONSE');}finally{reader.releaseLock();}
 }
 function closing(parameters){return parameters.reduceOnly==='true'||(parameters.positionSide==='LONG'&&parameters.side==='SELL')||(parameters.positionSide==='SHORT'&&parameters.side==='BUY');}
+function samePositiveAmount(a,b){
+  return positive(a)&&positive(b)&&units(a)===units(b);
+}
+function openingMakerOrder(expected,market,observed){
+  if(!expected||expected.market!==market||!ownOrderId(expected.id)||!observed)return false;
+  const direction=expected.intent==='OPEN_LONG'?'LONG':expected.intent==='OPEN_SHORT'?'SHORT':null;
+  return direction!==null&&observed.clientOrderId===expected.id&&observed.symbol===expected.symbol&&
+    observed.type==='LIMIT'&&observed.timeInForce==='GTX'&&
+    observed.side===expected.side&&expected.side===(direction==='LONG'?'BUY':'SELL')&&
+    observed.positionSide===expected.positionSide&&['BOTH',direction].includes(expected.positionSide)&&
+    (observed.reduceOnly===false||observed.reduceOnly==='false')&&
+    Number.isSafeInteger(observed.orderId)&&observed.orderId>0;
+}
 export class FuturesClient{
   #key;#secret;#rsa;#fetch;#now;#offset;#syncedAt;#armed=false;#settings=false;#mode=false;#margin=false;#blocked=false;#routes;#origin;
+  #verifiedMakerOrders=new WeakMap();
+  #submittedMakerProtections=new Set();
   constructor({market,apiKey='',apiSecret='',privateKeyPem='',fetchImpl=fetch,now=Date.now,...extra}={}){
     family(market);if(Object.keys(extra).length||[apiKey,apiSecret,privateKeyPem].some(x=>typeof x!=='string')||(apiSecret&&privateKeyPem)||apiKey.startsWith('apik_'))throw new Error('INVALID_FUTURES_CLIENT_OPTIONS');
     Object.defineProperty(this,'market',{value:market,enumerable:true});this.#origin=market==='USD_M'?'https://fapi.binance.com':'https://dapi.binance.com';
@@ -74,6 +89,49 @@ export class FuturesClient{
   armMode(value){if(value!==MODE_CONFIRMATION)throw new Error('EXPLICIT_ACCOUNT_HEDGE_MODE_CONFIRMATION_REQUIRED');if(this.#blocked)throw new Error('FUTURES_SERVICE_BLOCKED');this.#mode=true;}
   armMargin(value){if(value!==MARGIN_CONFIRMATION)throw new Error('EXPLICIT_ISOLATED_MARGIN_ADDITION_REQUIRED');if(this.#blocked)throw new Error('FUTURES_SERVICE_BLOCKED');this.#margin=true;}
   disarmMargin(){this.#margin=false;}
+  async requestOwnedMakerCancel(pending,order){
+    const args=pending?.args,observed=this.#verifiedMakerOrders.get(order);
+    if(pending?.kind!=='ORDER'||!args||args.type!=='LIMIT'||args.timeInForce!=='GTX'||
+      !openingMakerOrder({...args,id:pending.id,market:pending.market,intent:pending.intent},this.market,observed)||
+      pending.direction!==(args.side==='BUY'?'LONG':'SHORT')||!['NEW','PARTIALLY_FILLED'].includes(observed.status)||
+      !samePositiveAmount(args.price,observed.price)||!samePositiveAmount(args.quantity,observed.origQty)||
+      (pending.exchangeOrderId!=null&&pending.exchangeOrderId!==observed.orderId)){
+      throw new Error('VERIFIED_WORKING_OWN_MAKER_ORDER_REQUIRED');
+    }
+    this.#verifiedMakerOrders.delete(order);
+    return this.#send('cancelOrder',{symbol:observed.symbol,origClientOrderId:observed.clientOrderId},true);
+  }
+  async requestOwnedMakerProtection(parameters,receipt){
+    const args={...parameters},own={...receipt};
+    const proofFailure=()=>Object.assign(new Error('MATCHING_OWN_MAKER_FILL_PROTECTION_REQUIRED'),{makerProtectionNotSubmitted:true});
+    if(Object.keys(args).some(field=>!this.#routes.get('newProtection')[2].includes(field))||
+      own.market!==this.market||!ownOrderId(own.id)||own.timeInForce!=='GTX'||!Number.isSafeInteger(own.orderId)||own.orderId<=0||
+      !['FILLED','CANCELED','EXPIRED','EXPIRED_IN_MATCH'].includes(own.status)||
+      !samePositiveAmount(own.quantity,args.quantity)||args.symbol!==own.symbol||args.positionSide!==own.positionSide||
+      !['OPEN_LONG','OPEN_SHORT'].includes(own.intent)||args.side!==(own.intent==='OPEN_LONG'?'SELL':'BUY')||
+      args.clientAlgoId!=='asbp_'+own.id.slice(5)||
+      (own.positionSide==='BOTH'?args.reduceOnly!=='true':args.reduceOnly!==undefined)||
+      args.algoType!=='CONDITIONAL'||args.type!=='STOP_MARKET'||args.workingType!=='MARK_PRICE'||
+      args.priceProtect!=='FALSE'||!positive(args.triggerPrice)){
+      throw proofFailure();
+    }
+    // Reopening an encrypted ledger after a restart must prove the receipt against the same exchange account.
+    let observed;
+    try{observed=await this.request('order',{symbol:own.symbol,origClientOrderId:own.id});}
+    catch(error){error.makerProtectionNotSubmitted=true;throw error;}
+    if(!openingMakerOrder(own,this.market,observed)||observed.orderId!==own.orderId||observed.status!==own.status||
+      !samePositiveAmount(own.quantity,observed.executedQty)||!positive(observed.avgPrice)||
+      (own.intent==='OPEN_LONG'?units(args.triggerPrice)>=units(observed.avgPrice):units(args.triggerPrice)<=units(observed.avgPrice))){
+      throw proofFailure();
+    }
+    if(this.#submittedMakerProtections.has(args.clientAlgoId))throw new Error('MAKER_PROTECTION_ALREADY_SUBMITTED_RECONCILE');
+    this.#submittedMakerProtections.add(args.clientAlgoId);
+    try{return await this.#send('newProtection',args,true);}
+    catch(error){
+      if(error.definitiveRejection)this.#submittedMakerProtections.delete(args.clientAlgoId);
+      throw error;
+    }
+  }
   async syncTime(){const before=this.#now(),result=await this.request('time'),after=this.#now();if(!Number.isSafeInteger(result.serverTime)||result.serverTime<=0||after<before||after-before>5000)throw new Error('UNRELIABLE_FUTURES_CLOCK');this.#offset=result.serverTime-after-250;this.#syncedAt=after;return result.serverTime;}
   async request(name,parameters={}){
     try{return await this.#send(name,parameters);}
@@ -84,7 +142,7 @@ export class FuturesClient{
       throw error;
     }
   }
-  async #send(name,parameters){
+  async #send(name,parameters,makerCleanup=false){
     const route=this.#routes.get(name);if(!route||!parameters||typeof parameters!=='object'||Array.isArray(parameters)||Object.keys(parameters).some(k=>!route[2].includes(k)))throw new Error('FUTURES_ROUTE_OR_PARAMETER_REFUSED');
     if(this.#blocked)throw Object.assign(new Error('FUTURES_SERVICE_BLOCKED'),{httpStatus:this.#blocked});
     const [method,path,,signed,publicOrigin]=route;
@@ -97,7 +155,7 @@ export class FuturesClient{
         if(typeof parameters.symbol!=='string'||!/^[\p{L}\p{N}_-]{2,64}$/u.test(parameters.symbol))throw new Error('INVALID_PERPETUAL_SYMBOL');
       }else contractSymbol(parameters.symbol);
     }
-    if(['book','mark','fees','brackets','newOrder','newProtection','setMargin','setLeverage','order','trades','addMargin','marginHistory'].includes(name)&&!parameters.symbol)throw new Error('EXPLICIT_CONTRACT_REQUIRED');
+    if(['book','mark','fees','brackets','newOrder','newProtection','cancelOrder','setMargin','setLeverage','order','trades','addMargin','marginHistory'].includes(name)&&!parameters.symbol)throw new Error('EXPLICIT_CONTRACT_REQUIRED');
     if(name.endsWith('Candles')||name==='candles'){
       if(parameters.interval!=='1m'||!Number.isSafeInteger(parameters.limit)||parameters.limit<1||parameters.limit>120)throw new Error('BOUNDED_MINUTE_CANDLES_REQUIRED');
     }
@@ -116,7 +174,7 @@ export class FuturesClient{
       if(!this.#mode||parameters.dualSidePosition!=='true')throw new Error('EXPLICIT_ACCOUNT_HEDGE_MODE_CONFIRMATION_REQUIRED');
     }else if(name==='addMargin'){
       if(!this.#margin||parameters.type!==1||!positive(parameters.amount)||!['BOTH','LONG','SHORT'].includes(parameters.positionSide))throw new Error('EXPLICIT_ISOLATED_MARGIN_ADDITION_REQUIRED');
-    }else if(method!=='GET'&&!this.#armed)throw new Error('EXPLICIT_FUTURES_START_REQUIRED');
+    }else if(method!=='GET'&&!this.#armed&&!(makerCleanup&&(name==='cancelOrder'||name==='newProtection')))throw new Error('EXPLICIT_FUTURES_START_REQUIRED');
     if(['newOrder','newProtection'].includes(name)){
       if(!['BUY','SELL'].includes(parameters.side)||!['BOTH','LONG','SHORT'].includes(parameters.positionSide)||!positive(parameters.quantity))throw new Error('EXPLICIT_FUTURES_POSITION_AND_QUANTITY_REQUIRED');
       if(parameters.positionSide!=='BOTH'&&parameters.reduceOnly!==undefined)throw new Error('HEDGE_MODE_REDUCE_ONLY_PARAMETER_REFUSED');
@@ -125,7 +183,9 @@ export class FuturesClient{
     if(name==='newOrder'){
       if(!ownOrderId(parameters.newClientOrderId)||parameters.newOrderRespType!=='ACK')throw new Error('PERSISTED_OWN_ORDER_ID_REQUIRED');
       if(parameters.type==='LIMIT'){
-        if(parameters.timeInForce!=='IOC'||!positive(parameters.price))throw new Error('LIMIT_IOC_PRICE_REQUIRED');
+        if(parameters.timeInForce==='GTX'){
+          if(closing(parameters)||!positive(parameters.price)||(parameters.positionSide==='BOTH'&&parameters.reduceOnly!=='false'))throw new Error('LIMIT_GTX_ONLY_FOR_OPENING');
+        }else if(parameters.timeInForce!=='IOC'||!positive(parameters.price))throw new Error('LIMIT_IOC_PRICE_REQUIRED');
       }else if(parameters.type==='MARKET'){
         if(!closing(parameters)||parameters.price!==undefined||parameters.timeInForce!==undefined)throw new Error('MARKET_ONLY_FOR_REDUCING_OWN_POSITION');
       }else throw new Error('FUTURES_ORDER_TYPE_REFUSED');
@@ -147,8 +207,13 @@ export class FuturesClient{
     let result;try{result=await boundedJson(response);}catch{throw Object.assign(new Error(method==='GET'?'INVALID_FUTURES_RESPONSE':'FUTURES_RESULT_UNKNOWN_RECONCILE'),{httpStatus:response.status});}
     if(!response.ok||(typeof result?.code==='number'&&result.code<0)){
       const error=new Error(method==='GET'?'FUTURES_QUERY_REJECTED':'FUTURES_MUTATION_REJECTED_OR_UNKNOWN');error.binanceCode=Number.isSafeInteger(result?.code)?result.code:null;error.httpStatus=response.status;
-      error.definitiveRejection=method==='POST'&&response.status===400&&([-1013,-1021,-2019,-2021,-2022].includes(error.binanceCode)||(error.binanceCode<=-1100&&error.binanceCode>=-1136));throw error;
+      const rejectedPostOnly=name==='newOrder'&&parameters.timeInForce==='GTX'&&error.binanceCode===-5022;
+      error.definitiveRejection=method==='POST'&&response.status===400&&(rejectedPostOnly||[-1013,-1021,-2019,-2021,-2022].includes(error.binanceCode)||(error.binanceCode<=-1100&&error.binanceCode>=-1136));throw error;
     }
-    if(!result||typeof result!=='object')throw new Error('INVALID_FUTURES_RESPONSE');return result;
+    if(!result||typeof result!=='object')throw new Error('INVALID_FUTURES_RESPONSE');
+    if(name==='order'&&result.type==='LIMIT'&&result.timeInForce==='GTX'&&ownOrderId(result.clientOrderId)){
+      this.#verifiedMakerOrders.set(result,{...result});
+    }
+    return result;
   }
 }

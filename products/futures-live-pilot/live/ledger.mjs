@@ -168,6 +168,13 @@ export function validateLedger(state){
     }
   }
   if(state.pending&&(!['ORDER','PROTECTION','CANCEL_PROTECTION','MARGIN_ADD'].includes(state.pending.kind)||!moment(state.pending.createdAt)||!(ownOrderId(state.pending.id)||ownAlgoId(state.pending.id)||ownMarginId(state.pending.id))||!['LONG','SHORT'].includes(state.pending.direction)))throw new Error('INVALID_PENDING_FUTURES_INTENT');
+  if(state.makerProtectionDue){
+    const receipt=state.orders.find(order=>order.id===state.makerProtectionDue);
+    const leg=receipt?.intent==='OPEN_LONG'?'LONG':receipt?.intent==='OPEN_SHORT'?'SHORT':null;
+    const position=leg&&state.positions[leg];
+    if(!receipt||receipt.timeInForce!=='GTX'||!position||position.market!==receipt.market||position.symbol!==receipt.symbol||
+      position.positionSide!==receipt.positionSide||units(position.quantity)!==units(receipt.quantity))throw new Error('INVALID_MAKER_PROTECTION_RECEIPT');
+  }
   for(const direction of ['LONG','SHORT']){
     const p=state.positions[direction];if(p){contractSymbol(p.symbol);if(!['USD_M','COIN_M'].includes(p.market)||p.direction!==direction||![direction,'BOTH'].includes(p.positionSide)||!units(p.quantity)||!units(p.entryPrice)||!units(p.contractSize)||!moment(p.openedAt)||!asset(p.marginAsset)||!p.risk)throw new Error('INVALID_OWNED_FUTURES_POSITION');}
     const stop=state.protections[direction];if(stop&&(!ownAlgoId(stop.id)||stop.side!==(direction==='LONG'?'SELL':'BUY')||![direction,'BOTH'].includes(stop.positionSide)))throw new Error('INVALID_OWNED_PROTECTION');
@@ -329,6 +336,10 @@ export function applyFinalOrder(state,order,rawFills){
       const remaining=units(owned.quantity)-executed;next.positions[direction]=remaining?{...owned,quantity:decimal(remaining)}:null;
     }
   }
-  next.fills.push(...fills);next.orders.push({id:pending.id,orderId:order.orderId,market,symbol:args.symbol,intent,side:args.side,positionSide:args.positionSide,quantity:decimal(executed),status:order.status,time:fills.length?Math.max(...fills.map(row=>row.time)):pending.createdAt});next.pending=null;
+  const maker=args.timeInForce==='GTX';
+  if(maker&&(!intent.startsWith('OPEN_')||state.positions[direction]))throw new Error('MAKER_REQUIRES_FLAT_OWNED_LEG');
+  next.fills.push(...fills);next.orders.push({id:pending.id,orderId:order.orderId,market,symbol:args.symbol,intent,side:args.side,positionSide:args.positionSide,quantity:decimal(executed),status:order.status,time:fills.length?Math.max(...fills.map(row=>row.time)):pending.createdAt,...(maker?{timeInForce:'GTX'}:{})});next.pending=null;
+  if(maker&&executed)next.makerProtectionDue=pending.id;
+  else if(executed&&intent.startsWith('CLOSE_')&&state.makerProtectionDue&&state.orders.find(o=>o.id===state.makerProtectionDue)?.intent==='OPEN_'+direction)next.makerProtectionDue=null;
   return validateLedger(next);
 }
