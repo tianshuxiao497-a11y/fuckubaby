@@ -219,4 +219,13 @@ test('trade report distinguishes exchange fills, native fees, funding scope, unv
   assert.deepEqual(cells('closed-cycles').slice(-2),['0 USDT','-0.00002 BNB\n+0.5 USDT']);
   assert.equal($('unattributed-funding').hidden,true);
   assert.equal($('order-view').hidden,false);
+  state.tradeReport=state.snapshot.tradeReport;
+  Object.assign(state.tradeReport.positions.SHORT,{quantity:'0.003',quantityUnit:'BTC',entryPrice:'60000',quoteAsset:'USDT',unrealized:null,estimatedCloseFee:null});
+  state.connected=false;state.snapshot=null;
+  await refresh();
+  assert.match($('short-position').textContent,/本机记录.*0\.003 BTC/);
+  assert.equal($('short-unrealized').textContent,'—');
+  assert.equal($('short-paid-fees').textContent,'0.000001 BNB\n0.15 USDT');
+  assert.equal($('short-exit-fee').textContent,'—');
+  assert.deepEqual(cells('closed-cycles').slice(-2),['0 USDT','-0.00002 BNB\n+0.5 USDT']);
 });

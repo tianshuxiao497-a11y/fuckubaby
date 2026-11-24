@@ -429,8 +429,10 @@ function autoFlag(value){return value===false?'已关闭，无需额外操作':v
 function renderHedgeAndMargin(state){
   const s=state.snapshot,positions=s?.positions??{},stops=s?.protections??{},confirmation=$('confirmation').value==='START REAL FUTURES TRADING',ready=!busy&&state.unlocked&&state.connected&&!state.pending;
   for(const [key,direction] of [['long','LONG'],['short','SHORT']]){
-    const p=positions[direction],stop=stops[direction],risk=s?.configuration?.legs?.[direction];$(''+key+'-position').textContent=p?`${p.quantity} · 入场 ${p.entryPrice}`:'无持仓 / Flat';
-    $(key+'-protection').textContent=p?`止损 ${stop?.triggerPrice??'尚未确认'} · 强平 ${risk?.liquidationPrice??'未返回'} · 逐仓保证金 ${risk?.isolatedWallet??'未返回'} ${s.marginAsset}`:'没有该方向的程序仓位';
+    const p=positions[direction],stop=stops[direction],risk=s?.configuration?.legs?.[direction];
+    const leg=(s?.tradeReport??state.tradeReport)?.positions?.[direction];
+    $(key+'-position').textContent=p?`${p.quantity} · 入场 ${p.entryPrice}`:leg?`本机记录 · ${reportQuantity(leg)} · 入场 ${reportAmount(leg.entryPrice,leg.quoteAsset)}`:state.connected?'无持仓 / Flat':'等待核对';
+    $(key+'-protection').textContent=p?`止损 ${stop?.triggerPrice??'尚未确认'} · 强平 ${risk?.liquidationPrice??'未返回'} · 逐仓保证金 ${risk?.isolatedWallet??'未返回'} ${s.marginAsset}`:state.connected&&!leg?'没有该方向的程序仓位':'等待核对保护单';
     $(key+'-signal').textContent=s?.signals?.[direction]?`${s.signals[direction].intent??'等待'} · ${message(s.sideBlockers?.[direction]??s.signals[direction].reason)}`:'等待核对';$( 'close-'+key).disabled=!ready||!p||!confirmation;
   }
   const long=positions.LONG?.quantity??'0',short=positions.SHORT?.quantity??'0',count=Object.values(positions).filter(Boolean).length;

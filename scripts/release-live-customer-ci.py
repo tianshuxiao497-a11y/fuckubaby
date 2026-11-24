@@ -17,7 +17,7 @@ def digest(path):
 
 
 version = "0.4.1"
-tag = f"v{version}-live-customer"
+tag = f"v{version}-live-customer.2"
 repo = os.environ["GITHUB_REPOSITORY"]
 commit = os.environ["GITHUB_SHA"]
 if repo != "tianshuxiao497-a11y/fuckubaby" or os.environ["GITHUB_REF"] != "refs/heads/codex/live-customer-031":
